@@ -234,23 +234,48 @@ const machineLabel = m => m ? [m.model, m.fabrikant && `(${m.fabrikant})`].filte
 /* =========================================================================
    Werkbon model
    ========================================================================= */
-async function nextNumber() {
+// Werkbon numbers use the prefix of the werkbon's monteur. The signed-in monteur uses the
+// prefix from Instellingen; other monteurs their own prefix from the monteurs list.
+function prefixVoor(monteur) {
+  const own = App.settings.nummering.prefix || 'WB';
+  if (!monteur || norm(monteur) === norm(App.settings.mijnNaam)) return own;
+  const mt = App.monteurs.find(m => norm(m.naam) === norm(monteur));
+  return mt?.prefix || initials(monteur) || own;
+}
+const splitNummer = nr => { const m = /^(.*)-(\d{4})-(\d+)$/.exec(nr || ''); return m ? { prefix: m[1], jaar: m[2], volg: +m[3] } : null; };
+
+async function nextNumber(monteur) {
   const n = App.settings.nummering;
-  const nr = `${n.prefix || 'WB'}-${new Date().getFullYear()}-${String(n.volgend).padStart(4, '0')}`;
-  n.volgend++;
-  await saveSettings(true);
-  return nr;
+  const prefix = prefixVoor(monteur);
+  const own = prefix === (n.prefix || 'WB');
+  // Next free number for this prefix; for the own prefix also respect "Volgend volgnummer" from Instellingen
+  const volg = Math.max(await volgendNummer(prefix), own ? n.volgend : 1);
+  if (own) { n.volgend = volg + 1; await saveSettings(true); }
+  return `${prefix}-${new Date().getFullYear()}-${String(volg).padStart(4, '0')}`;
 }
 
-async function newWerkbon() {
+// Gives a concept werkbon a number with its monteur's prefix, if it doesn't have one yet
+async function nummerVoorMonteur(wb) {
+  const cur = splitNummer(wb.nummer);
+  if (wb.status !== 'concept' || !cur || cur.prefix === prefixVoor(wb.monteur)) return false;
+  const oud = wb.nummer;
+  wb.nummer = await nextNumber(wb.monteur);
+  // Hand the old number back when it was the last one given out with the own prefix
+  const n = App.settings.nummering;
+  if (cur.prefix === (n.prefix || 'WB') && n.volgend === cur.volg + 1) { n.volgend = cur.volg; await saveSettings(true); }
+  toast(`Werkbonnummer ${oud} gewijzigd naar ${wb.nummer}`);
+  return true;
+}
+
+async function newWerkbon(monteur = App.settings.mijnNaam || '') {
   const t = App.settings.tarieven;
   const now = new Date().toISOString();
   return {
     id: uid(),
-    nummer: await nextNumber(),
+    nummer: await nextNumber(monteur),
     status: 'concept',
     datum: today(), starttijd: nowTime(), eindtijd: '',
-    monteur: App.settings.mijnNaam || '',
+    monteur,
     interventie: App.settings.interventietypes[0] || '',
     referentie: '',
     klantId: null, klant: null,
@@ -578,7 +603,28 @@ async function viewWerkbon(id) {
   const wb = await DB.get('werkbonnen', id);
   if (!wb) { setView('<div class="empty">Deze werkbon bestaat niet (meer). <a href="#/">Terug naar overzicht</a></div>'); return; }
   App.wb = wb;
+  // Older concept werkbonnen may still carry another monteur's prefix
+  const renumbered = await nummerVoorMonteur(wb);
   renderWerkbon();
+  if (renumbered) scheduleSave();
+}
+
+// Renumber after the monteur changed; one at a time, and again if it changed meanwhile
+let renumbering = null;
+function nummerNaMonteurwissel() {
+  const wb = App.wb;
+  if (!wb || renumbering) return;
+  renumbering = nummerVoorMonteur(wb)
+    .then(changed => {
+      if (!changed || App.wb !== wb) return;
+      const h1 = $('.page-head h1');
+      if (h1) h1.textContent = `Werkbon ${wb.nummer}`;
+      scheduleSave();
+    })
+    .finally(() => {
+      renumbering = null;
+      if (App.wb === wb && wb.status === 'concept' && splitNummer(wb.nummer)?.prefix !== prefixVoor(wb.monteur)) nummerNaMonteurwissel();
+    });
 }
 
 function renderWerkbon() {
@@ -808,6 +854,7 @@ function bindWerkbon() {
     setPath(App.wb, path, v);
 
     if (path === 'werkuren') App.wb.werkurenHandmatig = true;
+    if (path === 'monteur') nummerNaMonteurwissel();
     if ((path === 'starttijd' || path === 'eindtijd') && !App.wb.werkurenHandmatig) {
       const h = hoursBetween(App.wb.starttijd, App.wb.eindtijd);
       if (h != null) {
@@ -868,10 +915,10 @@ function bindWerkbon() {
         return printWerkbon(wb, App.settings);
       case 'duplicate': {
         await flushSave();
-        const copy = await newWerkbon();
+        const copy = await newWerkbon(wb.monteur || undefined);
         Object.assign(copy, {
           klantId: wb.klantId, klant: wb.klant, machineId: wb.machineId, machine: wb.machine,
-          interventie: wb.interventie, referentie: wb.referentie, monteur: wb.monteur || copy.monteur,
+          interventie: wb.interventie, referentie: wb.referentie,
           onderdelen: clone(wb.onderdelen), uurtarief: wb.uurtarief, aanrijkost: clone(wb.aanrijkost),
           brandstoftoeslag: clone(wb.brandstoftoeslag), extra: clone(wb.extra),
         });
