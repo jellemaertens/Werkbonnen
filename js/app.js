@@ -229,7 +229,7 @@ function saveSettings(immediate) {
 
 const klantById = id => App.klanten.find(k => k.id === id);
 const machinesOf = klantId => App.machines.filter(m => m.klantId === klantId).sort((a, b) => (a.soort + a.model).localeCompare(b.soort + b.model));
-const snapKlant = k => ({ nummer: k.nummer || '', naam: k.naam, groep: k.groep || '', adres: k.adres || '', postcode: k.postcode || '', gemeente: k.gemeente || '', land: k.land || '', contact: k.contact || '', email: k.email || '', telefoon: k.telefoon || '', openingsuren: k.openingsuren || '', sluitingsdag: k.sluitingsdag || '' });
+const snapKlant = k => ({ nummer: k.nummer || '', naam: k.naam, groep: k.groep || '', adres: k.adres || '', postcode: k.postcode || '', gemeente: k.gemeente || '', land: k.land || '', contact: k.contact || '', email: k.email || '', telefoon: k.telefoon || '', btw: k.btw || '', openingsuren: k.openingsuren || '', sluitingsdag: k.sluitingsdag || '' });
 const klantUren = k => k ? [k.openingsuren && `Open: ${k.openingsuren}`, k.sluitingsdag && `Gesloten: ${k.sluitingsdag}`].filter(Boolean).join(' · ') : '';
 const snapMachine = m => ({ model: m.model, fabrikant: m.fabrikant || '', soort: m.soort || '', serienummer: m.serienummer || '' });
 const klantAdres = k => k ? [k.adres, [k.postcode, k.gemeente].filter(Boolean).join(' '), k.land].filter(Boolean).join('\n') : '';
@@ -431,13 +431,13 @@ function openPicker({ title, items, render, haystack, onPick, keepOpen = false, 
 
 /* ---------- Klant & machine forms (modals) ---------- */
 function openKlantModal(klant, onSaved) {
-  const k = klant ? clone(klant) : { id: uid(), nummer: '', naam: '', groep: '', adres: '', postcode: '', gemeente: '', land: 'BE', contact: '', email: '', telefoon: '', openingsuren: '', sluitingsdag: '' };
+  const k = klant ? clone(klant) : { id: uid(), nummer: '', naam: '', groep: '', adres: '', postcode: '', gemeente: '', land: 'BE', contact: '', email: '', telefoon: '', btw: '', openingsuren: '', sluitingsdag: '' };
   const f = (name, label, type = 'text', cls = '') => `<label class="field ${cls}"><span>${label}</span><input type="${type}" name="${name}" value="${esc(k[name])}"></label>`;
   const m = openModal({
     title: klant ? 'Klant bewerken' : 'Nieuwe klant',
     body: `<form class="grid two" data-form>
       ${f('naam', 'Naam *', 'text', 'full')}
-      ${f('nummer', 'Klantnummer')}${f('groep', 'Klantgroep')}
+      ${f('nummer', 'Klantnummer')}${f('groep', 'Klantgroep')}${f('btw', 'BTW-nummer')}
       ${f('adres', 'Adres', 'text', 'full')}
       ${f('postcode', 'Postcode')}${f('gemeente', 'Gemeente')}${f('land', 'Land')}
       ${f('contact', 'Contactpersoon')}${f('telefoon', 'Telefoon', 'tel')}${f('email', 'E-mail', 'email')}
@@ -673,7 +673,14 @@ function renderWerkbon() {
         <button type="button" class="btn small danger" data-action="delete">Verwijderen</button>
       </div>
     </div>
-    ${locked ? `<div class="locked-note"><span>✓ Deze werkbon is afgerond${wb.handtekening ? ` en ondertekend door <b>${esc(wb.handtekening.naam)}</b>` : ''}. Hij kan niet meer gewijzigd worden.</span><button type="button" class="btn small" data-action="reopen">Heropenen</button></div>` : ''}
+    ${locked ? `<div class="locked-note"><span>✓ Deze werkbon is afgerond${wb.handtekening ? ` en ondertekend door <b>${esc(wb.handtekening.naam)}</b>` : ''}. Hij kan niet meer gewijzigd worden.</span><button type="button" class="btn small" data-action="reopen">Heropenen</button></div>
+    <section class="card docs"><h2>Documenten</h2>
+      <div class="doc-buttons">
+        <button type="button" class="btn primary doc" data-action="print"><span class="doc-icon" aria-hidden="true">📄</span><span><b>Werkbon</b><br><span class="small">Downloaden (PDF) of afdrukken</span></span></button>
+        <button type="button" class="btn doc" data-action="proforma"><span class="doc-icon" aria-hidden="true">🧾</span><span><b>Pro forma-factuur</b><br><span class="small">Kosten van het bezoek met prijzen en BTW (PDF)</span></span></button>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">Kies in het printvenster <b>Opslaan als PDF</b> om het bestand te downloaden.</p>
+    </section>` : ''}
     <fieldset id="wb-form" ${locked ? 'disabled' : ''} style="border:0;padding:0;margin:0;min-width:0">
       ${secKlant()}
       ${secBezoek()}
@@ -688,7 +695,8 @@ function renderWerkbon() {
       <span class="spacer"></span>
       <span class="saved hide-sm" id="saved"></span>
       <a class="btn hide-sm" href="#/">Overzicht</a>
-      <button type="button" class="btn primary" data-action="print">PDF / Afdrukken</button>
+      ${locked ? '<button type="button" class="btn hide-sm" data-action="proforma">Pro forma</button>' : ''}
+      <button type="button" class="btn primary" data-action="print">${locked ? 'Werkbon' : 'PDF / Afdrukken'}</button>
     </div></div>`);
   bindWerkbon();
 }
@@ -949,6 +957,9 @@ function bindWerkbon() {
       case 'print':
         await flushSave();
         return printWerkbon(wb, App.settings);
+      case 'proforma':
+        await flushSave();
+        return printProforma(wb, App.settings);
       case 'duplicate': {
         await flushSave();
         const copy = await newWerkbon(wb.monteur || undefined);
@@ -1167,7 +1178,7 @@ async function viewKlanten() {
   $('[data-q]').addEventListener('input', e => { ui.klantQuery = e.target.value; draw(); });
   $('[data-new]').addEventListener('click', () => openKlantModal(null, k => (location.hash = `#/klant/${k.id}`)));
   $('[data-export]').addEventListener('click', () => {
-    const cols = ['nummer', 'naam', 'groep', 'adres', 'postcode', 'gemeente', 'land', 'contact', 'telefoon', 'email'];
+    const cols = ['nummer', 'naam', 'groep', 'adres', 'postcode', 'gemeente', 'land', 'contact', 'telefoon', 'email', 'btw'];
     download(`klanten-${today()}.csv`, toCsv([cols, ...App.klanten.map(k => cols.map(c => k[c]))]), 'text/csv;charset=utf-8');
   });
   $('[data-import]').addEventListener('click', importKlanten);
@@ -1187,6 +1198,7 @@ async function importKlanten() {
     contact: ['contact', 'contactpersoon'],
     telefoon: ['telefoon', 'tel', 'phone', 'gsm'],
     email: ['email', 'e-mail', 'mail'],
+    btw: ['btw', 'btw-nummer', 'btw nummer', 'btw-nr', 'btwnr', 'vat', 'ondernemingsnummer'],
   }).filter(o => o.naam);
   if (!objs.length) { toast('Geen klanten gevonden. De eerste rij moet kolomnamen bevatten, bv. naam;adres;postcode;gemeente'); return; }
   let added = 0, updated = 0;
@@ -1222,6 +1234,7 @@ async function viewKlant(id) {
         <div><div class="label">Contact</div><div>${esc([k.contact, k.telefoon, k.email].filter(Boolean).join(' · ')) || '<span class="muted">—</span>'}</div></div>
         <div><div class="label">Klantnummer</div><div>${esc(k.nummer) || '<span class="muted">—</span>'}</div></div>
         <div><div class="label">Klantgroep</div><div>${esc(k.groep) || '<span class="muted">—</span>'}</div></div>
+        <div><div class="label">BTW-nummer</div><div>${esc(k.btw) || '<span class="muted">—</span>'}</div></div>
         <div><div class="label">Openingsuren</div><div>${esc(k.openingsuren) || '<span class="muted">—</span>'}</div></div>
         <div><div class="label">Sluitingsdag(en)</div><div>${esc(k.sluitingsdag) || '<span class="muted">—</span>'}</div></div>
       </div>
