@@ -20,7 +20,7 @@ $types = @{
 # ---------------------------------------------------------------------------
 # Test imitation of the Supabase REST API (subset used by js/sync.js)
 # ---------------------------------------------------------------------------
-$tables = 'monteurs', 'klanten', 'machines', 'onderdelen', 'werkbonnen'
+$tables = 'wb_monteurs', 'wb_klanten', 'wb_machines', 'wb_onderdelen', 'wb_werkbonnen'
 $db = @{}
 $script:lastTs = [DateTime]::MinValue
 if ($Api) {
@@ -81,7 +81,7 @@ function Invoke-Api($ctx, [string]$rel) {
   # Same effect as the row-level security policies: wrong team code = no rows, no writes
   $ok = $req.Headers['x-team-code'] -ceq $TeamCode
 
-  if ($rel -eq 'rpc/werkbon_teamcode_ok') { Send-Body $res 200 ($(if ($ok) { 'true' } else { 'false' })); return }
+  if ($rel -eq 'rpc/wb_teamcode_ok') { Send-Body $res 200 ($(if ($ok) { 'true' } else { 'false' })); return }
   if ($tables -notcontains $rel) { Send-Body $res 404 "{`"message`":`"relation public.$rel does not exist`"}"; return }
 
   $q = [ordered]@{}
@@ -127,7 +127,7 @@ function Invoke-Api($ctx, [string]$rel) {
       foreach ($k in $it.Keys) { $row[$k] = $it[$k] }
       $row['bijgewerkt_op'] = New-Timestamp
       $d = $row['data']
-      if ($rel -eq 'werkbonnen') {
+      if ($rel -eq 'wb_werkbonnen') {
         $row['nummer'] = $d['nummer']; $row['datum'] = $d['datum']; $row['status'] = $d['status']; $row['monteur'] = $d['monteur']
         $row['klant_naam'] = if ($d['klant']) { $d['klant']['naam'] } else { $null }
       }
