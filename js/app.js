@@ -905,11 +905,15 @@ function bindWerkbon() {
       }
       case 'sign': return openSignModal();
       case 'finish-unsigned': return openUnsignedModal();
-      case 'reopen':
+      case 'reopen': {
         if (!confirm('Werkbon heropenen? De handtekening van de klant wordt verwijderd en moet opnieuw gezet worden.')) return;
         Object.assign(wb, { status: 'concept', handtekening: null, nietOndertekend: '', afgerondOp: null });
-        await saveNow(); renderWerkbon(); toast('Werkbon heropend');
+        // A reopened werkbon gets the number series of its monteur, if it carries another prefix
+        const renumbered = await nummerVoorMonteur(wb);
+        await saveNow(); renderWerkbon();
+        if (!renumbered) toast('Werkbon heropend');
         return;
+      }
       case 'print':
         await flushSave();
         return printWerkbon(wb, App.settings);
