@@ -192,6 +192,14 @@ const Sync = (() => {
     const rows = await api(`werkbonnen?select=nummer&nummer=like.${encodeURIComponent(like)}&order=nummer.desc&limit=1`);
     return rows[0]?.nummer || null;
   }
+  // Highest sequence number this year over all prefixes (all monteurs share one sequence)
+  async function maxVolgnummer() {
+    const jaar = new Date().getFullYear();
+    const rows = await api(`werkbonnen?select=nummer&nummer=like.${encodeURIComponent(`*-${jaar}-*`)}&limit=100000`);
+    let max = 0;
+    for (const r of rows) { const m = /-(\d{4})-(\d+)$/.exec(r.nummer || ''); if (m && +m[1] === jaar) max = Math.max(max, +m[2]); }
+    return max;
+  }
   // true / false, or null when the server can't be reached
   async function checkTeamcode() {
     try { return !!(await api('rpc/werkbon_teamcode_ok', { method: 'POST', body: {} })); } catch (e) { return e instanceof HttpError ? false : null; }
@@ -211,7 +219,7 @@ const Sync = (() => {
 
   return {
     state, start, syncNow, schedule, isConfigured, put, bulkPut, del, queueAll,
-    listWerkbonnen, fetchWerkbon, fetchAlleWerkbonnen, maxNummer, checkTeamcode,
+    listWerkbonnen, fetchWerkbon, fetchAlleWerkbonnen, maxNummer, maxVolgnummer, checkTeamcode,
     on: fn => listeners.add(fn),
   };
 })();

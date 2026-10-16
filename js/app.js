@@ -244,27 +244,55 @@ function prefixVoor(monteur) {
 }
 const splitNummer = nr => { const m = /^(.*)-(\d{4})-(\d+)$/.exec(nr || ''); return m ? { prefix: m[1], jaar: m[2], volg: +m[3] } : null; };
 
+const maakNummer = (prefix, jaar, volg) => `${prefix}-${jaar}-${String(volg).padStart(4, '0')}`;
+
 async function nextNumber(monteur) {
   const n = App.settings.nummering;
-  const prefix = prefixVoor(monteur);
-  const own = prefix === (n.prefix || 'WB');
-  // Next free number for this prefix; for the own prefix also respect "Volgend volgnummer" from Instellingen
-  const volg = Math.max(await volgendNummer(prefix), own ? n.volgend : 1);
-  if (own) { n.volgend = volg + 1; await saveSettings(true); }
-  return `${prefix}-${new Date().getFullYear()}-${String(volg).padStart(4, '0')}`;
+  // One sequence for all monteurs; "Volgend volgnummer" in Instellingen can only move it forward
+  const volg = Math.max(await volgendNummer(), parseNum(n.volgend) || 1);
+  n.volgend = volg + 1;
+  await saveSettings(true);
+  return maakNummer(prefixVoor(monteur), new Date().getFullYear(), volg);
 }
 
-// Gives a concept werkbon a number with its monteur's prefix, if it doesn't have one yet
+// A concept werkbon whose prefix belongs to another monteur keeps its sequence number and gets
+// the prefix of its monteur (JMT-2026-0004 -> TDG-2026-0004)
 async function nummerVoorMonteur(wb) {
   const cur = splitNummer(wb.nummer);
-  if (wb.status !== 'concept' || !cur || cur.prefix === prefixVoor(wb.monteur)) return false;
+  const prefix = prefixVoor(wb.monteur);
+  if (wb.status !== 'concept' || !cur || cur.prefix === prefix) return false;
   const oud = wb.nummer;
-  wb.nummer = await nextNumber(wb.monteur);
-  // Hand the old number back when it was the last one given out with the own prefix
-  const n = App.settings.nummering;
-  if (cur.prefix === (n.prefix || 'WB') && n.volgend === cur.volg + 1) { n.volgend = cur.volg; await saveSettings(true); }
+  wb.nummer = maakNummer(prefix, cur.jaar, cur.volg);
   toast(`Werkbonnummer ${oud} gewijzigd naar ${wb.nummer}`);
   return true;
+}
+
+// Once: werkbonnen numbered per prefix (before the shared sequence) can share a sequence number,
+// e.g. WB-2026-0001 and TDG-2026-0001. The later one gets the next free number; the prefix stays.
+async function maakNummerreeksUniek() {
+  if (App.settings.nummerreeksGedeeld) return;
+  const alle = (await DB.getAll('werkbonnen')).sort((a, b) => String(a.aangemaakt).localeCompare(String(b.aangemaakt)));
+  const max = {}, gezien = {}, gewijzigd = [];
+  for (const w of alle) { const n = splitNummer(w.nummer); if (n) max[n.jaar] = Math.max(max[n.jaar] || 0, n.volg); }
+  for (const w of alle) {
+    const n = splitNummer(w.nummer);
+    if (!n) continue;
+    const seen = (gezien[n.jaar] ??= new Set());
+    if (seen.has(n.volg)) {
+      const oud = w.nummer;
+      max[n.jaar]++;
+      w.nummer = maakNummer(n.prefix, n.jaar, max[n.jaar]);
+      seen.add(max[n.jaar]);
+      await Sync.put('werkbonnen', w);
+      gewijzigd.push(`${oud} → ${w.nummer}`);
+    } else seen.add(n.volg);
+  }
+  const jaar = String(new Date().getFullYear());
+  const s = App.settings;
+  s.nummering.volgend = Math.max(parseNum(s.nummering.volgend) || 1, (max[jaar] || 0) + 1);
+  s.nummerreeksGedeeld = true;
+  await saveSettings(true);
+  if (gewijzigd.length) toast(`Werkbonnummer aangepast: ${gewijzigd.join(', ')}`);
 }
 
 async function newWerkbon(monteur = App.settings.mijnNaam || '') {
@@ -1321,7 +1349,7 @@ function openAanmelden(onDone) {
     }
     if (mt.id !== s.monteurId && mt.prefix) {
       s.nummering.prefix = mt.prefix;
-      s.nummering.volgend = await volgendNummer(mt.prefix);
+      s.nummering.volgend = Math.max(parseNum(s.nummering.volgend) || 1, await volgendNummer());
     }
     s.monteurId = mt.id;
     s.mijnNaam = mt.naam;
@@ -1334,14 +1362,15 @@ function openAanmelden(onDone) {
   });
 }
 
-// Next free sequence number for this prefix this year, looking at this device and (if online) the central database
-async function volgendNummer(prefix) {
-  const re = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-${new Date().getFullYear()}-(\\d+)$`);
+// Next free sequence number this year. All monteurs share one sequence (WB-2026-0001, JMT-2026-0002,
+// TDG-2026-0003, ...); the prefix only shows whose werkbon it is. Looks at this device and, if online,
+// the central database.
+async function volgendNummer() {
+  const jaar = String(new Date().getFullYear());
   let max = 0;
-  const check = nr => { const m = re.exec(nr || ''); if (m) max = Math.max(max, +m[1]); };
-  for (const w of await DB.getAll('werkbonnen')) check(w.nummer);
+  for (const w of await DB.getAll('werkbonnen')) { const n = splitNummer(w.nummer); if (n && n.jaar === jaar) max = Math.max(max, n.volg); }
   if (Sync.isConfigured() && navigator.onLine) {
-    try { check(await Sync.maxNummer(prefix)); } catch { /* offline: local numbers only */ }
+    try { max = Math.max(max, await Sync.maxVolgnummer()); } catch { /* offline: local numbers only */ }
   }
   return max + 1;
 }
@@ -1521,7 +1550,7 @@ async function viewInstellingen() {
         ${inp('nummering.prefix', 'Voorvoegsel werkbonnummer')}
         ${num('nummering.volgend', 'Volgend volgnummer')}
       </div>
-      <p class="small muted">Geef elk toestel een eigen voorvoegsel (bv. je initialen) zodat werkbonnummers van verschillende monteurs nooit botsen. Voorbeeld: <b>${esc(s.nummering.prefix || 'WB')}-${new Date().getFullYear()}-${String(s.nummering.volgend).padStart(4, '0')}</b></p>
+      <p class="small muted">Alle monteurs delen één nummerreeks; het voorvoegsel (bv. je initialen) toont van wie de werkbon is. Andere monteurs krijgen hun eigen voorvoegsel uit Beheer. Volgende werkbon van jou: <b>${esc(s.nummering.prefix || 'WB')}-${new Date().getFullYear()}-${String(s.nummering.volgend).padStart(4, '0')}</b></p>
     </section>
 
     <section class="card"><h2>Bedrijfsgegevens <span class="step">komen bovenaan op de werkbon</span></h2>
@@ -1713,6 +1742,7 @@ async function boot() {
   await loadCache();
   drawTopbar();
   Sync.start(centraalConfig); // before route(): views ask Sync whether the central database is set up
+  await maakNummerreeksUniek();
   await route();
   if (!App.settings.monteurId) openAanmelden();
 }
