@@ -19,14 +19,15 @@ De app en de afgedrukte werkbon volgen de BOSS paints-huisstijl: het primaire gr
 
 De klanten, machines en onderdelen zijn bij de eerste start ingeladen uit `Eskens_servicebezoeken.xlsx` en de kostenbladen. Je kunt ze aanvullen via **Klanten** en **Onderdelen**, of een CSV importeren (bv. een export uit het ERP-pakket, in Excel opgeslagen als CSV).
 
-**Startgegevens en privacy:** `data/seed.js` in deze repository is bewust leeg. De echte startgegevens (klantnamen, adressen, contactpersonen, e-mailadressen, monteurs en onderdelenprijzen) staan in `data/seed.local.js`. Dat bestand staat in `.gitignore` en komt dus nooit op GitHub. Bestaat het, dan laadt de app het automatisch in plaats van de lege seed. Op een server zonder dat bestand start de app leeg; vul klanten en onderdelen dan aan via CSV-import of de centrale database.
+**Startgegevens en privacy:** `data/seed.js` in deze repository is bewust leeg. De echte startgegevens (klantnamen, adressen, contactpersonen, e-mailadressen, monteurs en onderdelenprijzen) staan in `data/seed.local.js`. Dat bestand staat in `.gitignore` en komt dus nooit op GitHub. Bestaat het, dan laadt de app het automatisch in plaats van de lege seed. Op een server zonder dat bestand (zoals GitHub Pages) start de app leeg. Laad de klanten, machines en monteurs dan eenmalig per toestel via **Instellingen › Startgegevens uit bestand**: kies daar het bestand `seed.local.js` (bv. vanuit OneDrive of een mail). Werkbonnen op het toestel blijven daarbij behouden.
 
 ## Eerste keer instellen (per toestel)
 
-1. **Aanmelden**: bij de eerste start kiest de monteur zijn naam uit de keuzelijst (en vult hij eenmalig de **teamcode** in die hij van kantoor krijgt). Via de naam rechtsboven kan je later van monteur wisselen.
-2. **Voorvoegsel werkbonnummer**: komt automatisch van de gekozen monteur (bv. `TD` geeft `TD-2026-0001`). Zo botsen nummers van verschillende monteurs nooit. Je kunt het aanpassen in **Instellingen**.
-3. **Bedrijfsgegevens en logo**: deze komen bovenaan op de werkbon.
-4. **Tarieven**: uurtarief, aanrijkost, brandstoftoeslag en BTW.
+1. **Aanmelden**: bij de eerste start kies je je naam (of typ je hem, als er nog geen monteurs zijn). Via de naam rechtsboven kan je later van monteur wisselen.
+2. **Startgegevens**: op een nieuw toestel zonder `seed.local.js`: **Instellingen › Startgegevens uit bestand** en kies `seed.local.js`.
+3. **Voorvoegsel werkbonnummer**: komt automatisch van de gekozen monteur (bv. `TDG` geeft `TDG-2026-0004`). Alle monteurs delen één nummerreeks; je kunt je voorvoegsel aanpassen in **Instellingen**.
+4. **Bedrijfsgegevens en logo**: deze komen bovenaan op de werkbon.
+5. **Tarieven**: uurtarief, aanrijkost, brandstoftoeslag en BTW.
 
 ## Starten op deze pc
 
@@ -36,11 +37,23 @@ powershell -ExecutionPolicy Bypass -File serve.ps1
 
 Open daarna http://localhost:8080 in Chrome of Edge.
 
-## In gebruik nemen op tablets en smartphones
+## In gebruik nemen op tablets en smartphones (GitHub Pages)
 
-De app is een set statische bestanden (HTML, CSS en JavaScript), zonder server-logica. Zet de map `werkbon-app` op een **https**-webadres, bv. Azure Static Web Apps, een interne webserver of een andere statische hosting. Open dat adres op de tablet en kies **Toevoegen aan beginscherm** of **App installeren**. Daarna werkt de app ook offline.
+De app is een set statische bestanden (HTML, CSS en JavaScript), zonder server-logica. GitHub Pages zet ze gratis op een https-adres:
 
-## Waar staan de gegevens? (centrale database)
+1. Ga op GitHub naar de repository **Werkbonnen** › **Settings** › **Pages**.
+2. Kies bij **Source**: *Deploy from a branch*, branch **main**, map **/ (root)**, en klik **Save**.
+3. Na een minuut staat de app op **https://jellemaertens.github.io/Werkbonnen/**. Elke push naar `main` zet automatisch een nieuwe versie online.
+4. Open dat adres op de tablet en kies **Toevoegen aan beginscherm** of **App installeren**. Daarna werkt de app ook offline.
+5. Laad de startgegevens (zie hierboven).
+
+Op GitHub Pages staan geen klantgegevens: `seed.local.js` zit niet in de repository.
+
+## Waar staan de gegevens?
+
+**De centrale database staat uit** (`centraal: false` in `js/config.js`). Alles wordt enkel op het toestel bewaard (in de browser). Werkbonnen gaan naar kantoor via de PDF en de CSV-export. Maak regelmatig een back-up via **Instellingen › Back-up downloaden**: wis je de browsergegevens, dan zijn de werkbonnen op dat toestel weg.
+
+De rest van dit hoofdstuk beschrijft de centrale database (Supabase), voor als je ze later weer aanzet met `centraal: true`.
 
 De app werkt **offline eerst**: alles wordt op het toestel bewaard (in de browser), zodat de monteur ook zonder netwerk verder kan. Is er een centrale database ingesteld, dan:
 
@@ -72,21 +85,45 @@ Zolang er geen enkele beheerder aangeduid is, ziet iedereen de pagina Beheer. Du
 
 ## Centrale database opzetten (Lovable Cloud / Supabase)
 
-1. **Database aanmaken.** Open het project in Lovable met **Lovable Cloud** aan (dat is een Supabase-database). Laat de SQL uit `supabase/migrations/001_werkbon_centraal.sql` uitvoeren: vraag het in de Lovable-chat ("voer deze migratie uit") of plak ze in de SQL-editor van Supabase. Dit maakt de tabellen `monteurs`, `klanten`, `machines`, `onderdelen` en `werkbonnen` aan, met de beveiliging via de teamcode.
-2. **Teamcode kiezen.** Voer uit (met je eigen code):
+1. **Database aanmaken.** Open het project in Lovable met **Lovable Cloud** aan (dat is een Supabase-database). Laat de SQL uit `supabase/migrations/001_werkbon_centraal.sql` uitvoeren: vraag het in de Lovable-chat ("voer deze migratie uit") of plak ze in de SQL-editor van Supabase. Keur de wijziging in Lovable goed, anders wordt ze niet uitgevoerd. Dit maakt de tabellen `wb_monteurs`, `wb_klanten`, `wb_machines`, `wb_onderdelen` en `wb_werkbonnen` aan, met de beveiliging via de teamcode. Alles begint met `wb_` omdat Lovable in hetzelfde project vaak zelf tabellen als `klanten` of `werkbonnen` aanmaakt, met een andere opbouw.
+2. **Teamcode kiezen.** Voer uit (met je eigen code). Zet de echte code nooit in het migratiebestand, dat staat mee in de broncode:
    ```sql
-   update public.werkbon_config set waarde = 'jouw-geheime-teamcode' where sleutel = 'teamcode';
+   update public.wb_config set waarde = 'jouw-geheime-teamcode' where sleutel = 'teamcode';
    ```
-3. **App koppelen.** Vul in `js/config.js` de **Project URL** en de **anon/publishable key** in (Lovable: Cloud-instellingen, Supabase: Project Settings › API). Dan moeten de toestellen enkel nog de teamcode invullen. Je kunt URL en sleutel ook per toestel invullen bij **Instellingen › Centrale database**.
-4. **App online zetten.** De app blijft een set statische bestanden. In een Lovable-project zet je de inhoud van `werkbon-app` in de map `public/`, zodat ze ongewijzigd geserveerd wordt. Je kunt ze ook op een andere https-hosting zetten en Lovable Cloud enkel als database gebruiken.
+3. **App koppelen.** Vul in `js/config.js` de **Project URL** en de **anon/publishable key** in. In Lovable staan ze in het bestand `.env` van het project (`VITE_SUPABASE_URL` en `VITE_SUPABASE_PUBLISHABLE_KEY`), in Supabase bij Project Settings › API. Dan moeten de toestellen enkel nog de teamcode invullen. Je kunt URL en sleutel ook per toestel invullen bij **Instellingen › Centrale database**.
+4. **App online zetten.** Zie [Hosten in Lovable](#hosten-in-lovable) hieronder. Je kunt de app ook op een andere https-hosting zetten en Lovable Cloud enkel als database gebruiken.
 5. **Vullen.** Open de app op één toestel, meld je aan, ga naar **Beheer** en klik **Lijsten van dit toestel uploaden**. Duid jezelf aan als beheerder en controleer de voorvoegsels van de monteurs.
 6. **Toestellen.** Open de app op elke tablet, kies de monteur, vul de teamcode in. Bij **Instellingen › Centrale database** kan je met **Verbinding testen** nagaan of alles klopt.
 
-Getest met de test-API hieronder. De koppeling met een echt Lovable Cloud-project (inclusief de headers voor de teamcode) is nog niet getest.
+### Getest met het echte Lovable Cloud-project
+
+Getest vanaf `http://localhost` tegen het echte project:
+
+- De publieke sleutel van het nieuwe type (`sb_publishable_…`) werkt. De app stuurt `Authorization: Bearer` enkel mee voor oude sleutels die met `eyJ` beginnen. Supabase aanvaardt beide.
+- CORS laat de extra header `x-team-code` toe vanaf een ander adres.
+- Met een verkeerde of ontbrekende teamcode:
+  - geeft lezen een lege lijst;
+  - weigert de database toevoegen (`new row violates row-level security policy`);
+  - verandert wijzigen of wissen niets;
+  - is `wb_config` onleesbaar;
+  - geeft `wb_teamcode_ok` `false`.
+- Met de juiste teamcode synchroniseert de app op `localhost:8080` (verzenden met `on_conflict=id` en `resolution=merge-duplicates`, en ophalen op `bijgewerkt_op`). De volledige test met twee toestellen staat nog open: een werkbon offline maken op het ene toestel, en een klant die centraal toegevoegd wordt op het andere zien verschijnen.
+
+Lovable kan in hetzelfde project eigen tabellen en functies hebben die niet door deze migratie beveiligd zijn. Kijk die na in Lovable (**Cloud › Database**, of vraag de Lovable-chat om een beveiligingsscan).
+
+### Hosten in Lovable (niet in gebruik)
+
+Niet in gebruik: de app staat op GitHub Pages. Ter info: een Lovable-project is zelf een Vite/React-app. Bestanden in de map `public/` worden ongewijzigd mee gepubliceerd. Daar kan de werkbon-app dus naast de React-app staan:
+
+1. Zet de inhoud van `werkbon-app` in de map **`public/werkbon/`** van het Lovable-project, via de GitHub-koppeling van Lovable of door de bestanden te laten toevoegen. Neem `supabase/`, `serve.ps1`, `_printtest.html` en `README.md` niet mee: die horen niet op een publieke website.
+2. Publiceer in Lovable (**Publish**). De app staat dan op `https://<jouw-project>.lovable.app/werkbon/index.html`. Gebruik dat volledige adres met `index.html`: voor andere adressen kan Lovable de eigen React-app tonen.
+3. Open dat adres op de tablet en kies **Toevoegen aan beginscherm**. Alle paden in de app zijn relatief, dus offline werking en installeren werken ook vanuit een submap.
+
+Deze hosting in Lovable is nog niet uitgeprobeerd.
 
 ### De database bekijken
 
-In de tabel `werkbonnen` staat de volledige werkbon als JSON in de kolom `data`. Voor overzichten zijn er ook gewone kolommen: `nummer`, `datum`, `status`, `monteur`, `klant_naam`, `gewijzigd_door` en `bijgewerkt_op` (tijdstip van ontvangst). Verwijderde records krijgen `verwijderd = true`, zodat ook andere toestellen ze kunnen wissen.
+In de tabel `wb_werkbonnen` staat de volledige werkbon als JSON in de kolom `data`. Voor overzichten zijn er ook gewone kolommen: `nummer`, `datum`, `status`, `monteur`, `klant_naam`, `gewijzigd_door` en `bijgewerkt_op` (tijdstip van ontvangst). Verwijderde records krijgen `verwijderd = true`, zodat ook andere toestellen ze kunnen wissen.
 
 ## Lokaal testen met een test-database
 
@@ -112,7 +149,7 @@ Open http://localhost:8090 en http://localhost:8091: dat zijn twee "toestellen" 
 | `js/signature.js` | Handtekeningveld |
 | `js/db.js` | Opslag op het toestel (IndexedDB), inclusief de wachtrij (`outbox`) |
 | `js/sync.js` | Synchronisatie met de centrale database: wachtrij verzenden, lijsten ophalen |
-| `js/config.js` | Adres en publieke sleutel van de centrale database |
+| `js/config.js` | Centrale database aan/uit (`centraal`), adres en publieke sleutel |
 | `supabase/migrations/001_werkbon_centraal.sql` | Tabellen en beveiliging van de centrale database |
 | `data/seed.js` | Startgegevens: klanten, machines, onderdelen, monteurs |
 | `sw.js` | Offline werking |

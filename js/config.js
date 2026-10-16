@@ -1,8 +1,10 @@
-// Central database (Lovable Cloud / Supabase). Fill this in once for all devices:
-// Project URL and the anon / publishable key (Lovable: Cloud > Overview, Supabase: Project Settings > API).
-// The teamcode is deliberately NOT stored here: each device enters it once at sign-in.
-// Leave empty to run without a central database (everything stays on the device).
+// Centrale database (Supabase). Staat UIT: elk toestel bewaart zijn eigen gegevens,
+// werkbonnen gaan naar kantoor via PDF en CSV-export.
+// - centraal: false  -> geen centrale database, ook niet als er in Instellingen iets ingevuld is.
+// - Later opnieuw aanzetten: centraal: true, en de project-URL en de publieke (anon/publishable)
+//   sleutel invullen. De teamcode staat bewust NIET hier: elk toestel vult die eenmalig in.
 window.WERKBON_CONFIG = {
-  supabaseUrl: 'https://ehfvjovrkboltysfayzb.supabase.co',
-  supabaseKey: 'sb_publishable_wdxUySB0AhfalWMSK7zLbQ_3Fim2_OB',
+  centraal: false,
+  supabaseUrl: '',
+  supabaseKey: '',
 };

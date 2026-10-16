@@ -59,7 +59,8 @@ const Sync = (() => {
   async function refreshPending() { state.pending = await DB.count('outbox'); emit('status'); }
 
   async function queue(items) {
-    if (!items.length) return;
+    // Without a central database there is nothing to send: don't let the outbox grow
+    if (!items.length || !config().url) return;
     await DB.bulkPut('outbox', items);
     await refreshPending();
     schedule();

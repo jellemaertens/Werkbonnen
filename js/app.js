@@ -208,7 +208,11 @@ const ikBen = () => App.monteurs.find(m => m.id === App.settings.monteurId) || n
 // Without any beheerder set, everyone sees Beheer (so the first one can be appointed)
 const magBeheren = () => !App.monteurs.some(m => m.beheerder) || !!ikBen()?.beheerder;
 
+// config.js can switch the central database off for good (centraal: false)
+const centraalUit = () => window.WERKBON_CONFIG?.centraal === false;
+
 function centraalConfig() {
+  if (centraalUit()) return { url: '', key: '', teamcode: '', door: App.settings.mijnNaam };
   const c = App.settings.centraal || {};
   const def = window.WERKBON_CONFIG || {};
   return { url: c.url || def.supabaseUrl || '', key: c.key || def.supabaseKey || '', teamcode: c.teamcode || '', door: App.settings.mijnNaam };
@@ -1438,18 +1442,20 @@ Sync.on(async type => {
    ========================================================================= */
 async function viewBeheer() {
   if (!magBeheren()) { setView('<div class="empty">Deze pagina is enkel voor beheerders.</div>'); return; }
+  const centraal = !centraalUit();
   setView(`
     <div class="page-head">
       <h1>Beheer</h1>
-      <div class="actions"><button type="button" class="btn" data-upload>Lijsten van dit toestel uploaden</button></div>
+      ${centraal ? '<div class="actions"><button type="button" class="btn" data-upload>Lijsten van dit toestel uploaden</button></div>' : ''}
     </div>
+    ${centraal ? `
     ${centraalIngesteld() ? '' : '<div class="locked-note"><span>Er is nog geen centrale database ingesteld. Vul ze in bij <a href="#/instellingen">Instellingen</a>.</span></div>'}
     <p class="small muted" style="margin-top:0">Klanten, machines en onderdelen beheer je via <a href="#/klanten">Klanten</a> en <a href="#/onderdelen">Onderdelen</a>: wijzigingen gaan naar de centrale database en komen zo bij alle monteurs.</p>
     <section class="card"><h2>Werkbonnen van alle monteurs
         <span class="row"><button type="button" class="btn small" data-export-all>Exporteren (CSV)</button><button type="button" class="btn small" data-reload>Vernieuwen</button></span></h2>
       <div class="toolbar"><div class="search"><input type="search" placeholder="Zoek op nummer, klant, monteur…" data-q></div></div>
       <div class="list" data-central><div class="muted">Laden…</div></div>
-    </section>
+    </section>` : '<p class="small muted" style="margin-top:0">Er is geen centrale database: monteurs, klanten en werkbonnen staan per toestel. Werkbonnen gaan naar kantoor via PDF of de CSV-export.</p>'}
     <section class="card"><h2>Monteurs <button type="button" class="btn small" data-new-monteur>＋ Monteur</button></h2>
       <div class="list">${App.monteurs.map(m => `
         <div class="list-item" data-monteur="${esc(m.id)}">
@@ -1476,6 +1482,9 @@ async function viewBeheer() {
     try { rows = await Sync.listWerkbonnen(); draw(); }
     catch (e) { $('[data-central]').innerHTML = `<div class="muted">Kon de centrale werkbonnen niet ophalen: ${esc(e.message)}</div>`; }
   };
+  $('[data-new-monteur]').addEventListener('click', () => openMonteurModal(null));
+  $$('[data-monteur]').forEach(el => el.addEventListener('click', () => openMonteurModal(App.monteurs.find(m => m.id === el.dataset.monteur))));
+  if (!centraal) return;
   load();
   $('[data-q]').addEventListener('input', draw);
   $('[data-reload]').addEventListener('click', load);
@@ -1490,8 +1499,6 @@ async function viewBeheer() {
   $('[data-export-all]').addEventListener('click', async () => {
     try { exportWerkbonnenCsv(await Sync.fetchAlleWerkbonnen()); } catch (err) { toast(`Ophalen mislukt: ${err.message}`); }
   });
-  $('[data-new-monteur]').addEventListener('click', () => openMonteurModal(null));
-  $$('[data-monteur]').forEach(el => el.addEventListener('click', () => openMonteurModal(App.monteurs.find(m => m.id === el.dataset.monteur))));
   $('[data-upload]').addEventListener('click', async () => {
     if (!confirm('Alle monteurs, klanten, machines en onderdelen van dit toestel naar de centrale database sturen? Gebruik dit om een lege centrale database te vullen. Bestaande records met hetzelfde id worden overschreven.')) return;
     const n = await Sync.queueAll(['monteurs', 'klanten', 'machines', 'onderdelen']);
@@ -1597,7 +1604,7 @@ async function viewInstellingen() {
       </div>
     </section>
 
-    <section class="card"><h2>Centrale database <span class="step">Lovable Cloud / Supabase</span></h2>
+    ${centraalUit() ? '' : `<section class="card"><h2>Centrale database <span class="step">Lovable Cloud / Supabase</span></h2>
       <div class="grid two">
         <label class="field full"><span>Project-URL</span><input data-s="centraal.url" value="${esc(s.centraal.url)}" placeholder="${esc(window.WERKBON_CONFIG?.supabaseUrl || 'https://xxxx.supabase.co')}" inputmode="url" autocomplete="off"></label>
         <label class="field"><span>Publieke sleutel (anon key)</span><input data-s="centraal.key" value="${esc(s.centraal.key)}" placeholder="${window.WERKBON_CONFIG?.supabaseKey ? 'uit config.js' : ''}" autocomplete="off"></label>
@@ -1607,7 +1614,7 @@ async function viewInstellingen() {
       <div class="row"><span data-sync-status class="small"></span><span class="spacer"></span>
         <button type="button" class="btn small" data-test>Verbinding testen</button>
         <button type="button" class="btn small primary" data-sync-now>Nu synchroniseren</button></div>
-    </section>
+    </section>`}
 
     <section class="card"><h2>Gegevens</h2>
       <p class="small muted" style="margin-top:0">Op dit toestel: ${counts.wb} werkbonnen, ${App.klanten.length} klanten, ${App.onderdelen.length} onderdelen. ${centraalIngesteld()
@@ -1616,7 +1623,8 @@ async function viewInstellingen() {
       <div class="row">
         <button type="button" class="btn primary" data-backup>Back-up downloaden</button>
         <button type="button" class="btn" data-restore>Back-up terugzetten</button>
-        ${centraalIngesteld() ? '' : '<button type="button" class="btn" data-seed>Startgegevens opnieuw laden</button>'}
+        ${centraalIngesteld() ? '' : '<button type="button" class="btn" data-seed-file>Startgegevens uit bestand</button>'}
+        ${centraalIngesteld() || !window.SEED?.klanten?.length ? '' : '<button type="button" class="btn" data-seed>Startgegevens opnieuw laden</button>'}
         <button type="button" class="btn danger" data-wipe>Alles wissen</button>
       </div>
     </section>`);
@@ -1639,8 +1647,8 @@ async function viewInstellingen() {
   root.addEventListener('change', e => { if (e.target.dataset.s?.startsWith('centraal.')) Sync.schedule(500); });
 
   $('[data-wissel]').addEventListener('click', () => openAanmelden(() => viewInstellingen()));
-  $('[data-sync-now]').addEventListener('click', async () => { await saveSettings(true); await Sync.syncNow(); });
-  $('[data-test]').addEventListener('click', async () => {
+  $('[data-sync-now]')?.addEventListener('click', async () => { await saveSettings(true); await Sync.syncNow(); });
+  $('[data-test]')?.addEventListener('click', async () => {
     await saveSettings(true);
     if (!centraalIngesteld()) { toast('Vul eerst de project-URL en sleutel in'); return; }
     const ok = await Sync.checkTeamcode();
@@ -1673,6 +1681,18 @@ async function viewInstellingen() {
     await boot();
     toast('Back-up teruggezet');
   });
+  $('[data-seed-file]')?.addEventListener('click', async () => {
+    const file = await pickFile('.js,.json,application/json,text/javascript');
+    if (!file) return;
+    const seed = leesStartgegevens(await file.text());
+    if (!seed) { toast('Dit bestand bevat geen startgegevens (seed.local.js)'); return; }
+    if (!confirm(`Alle klanten en machines op dit toestel vervangen door ${seed.klanten.length} klanten en ${(seed.machines || []).length} machines uit "${file.name}"?${seed.monteurs?.length ? ` Ook de monteurs worden vervangen (${seed.monteurs.join(', ')}).` : ''} Werkbonnen blijven behouden.`)) return;
+    await vervangStartgegevens(seed);
+    await loadCache();
+    drawTopbar();
+    toast(`${seed.klanten.length} klanten geladen`);
+    if (!App.settings.monteurId) openAanmelden(() => viewInstellingen()); else viewInstellingen();
+  });
   $('[data-seed]')?.addEventListener('click', async () => {
     if (!confirm('Klanten, machines en onderdelen uit de startgegevens opnieuw laden? Gewijzigde startgegevens worden overschreven; je eigen toevoegingen blijven behouden.')) return;
     await loadSeed(); await loadCache(); toast('Startgegevens geladen'); viewInstellingen();
@@ -1704,6 +1724,46 @@ function resizeImage(file, maxW, maxH) {
 }
 
 /* =========================================================================
+   Start data
+   ========================================================================= */
+// Reads start data from a seed.local.js ("window.SEED = {...};") or a plain JSON file
+function leesStartgegevens(text) {
+  try {
+    const i = text.indexOf('window.SEED');
+    const json = i >= 0 ? text.slice(text.indexOf('=', i) + 1).trim().replace(/;\s*$/, '') : text;
+    const seed = JSON.parse(json);
+    return Array.isArray(seed?.klanten) && seed.klanten.length ? seed : null;
+  } catch { return null; }
+}
+
+// Replaces all customers and machines (and, when given, the monteurs) on this device.
+// Parts are added or updated; werkbonnen stay untouched.
+async function vervangStartgegevens(seed) {
+  await DB.clear('klanten');
+  await DB.clear('machines');
+  await DB.bulkPut('klanten', seed.klanten);
+  await DB.bulkPut('machines', seed.machines || []);
+  if (seed.onderdelen?.length) await DB.bulkPut('onderdelen', seed.onderdelen);
+  if (seed.monteurs?.length) {
+    // Monteurs who stay keep their prefix and beheerder flag; a removed monteur on this device signs in again
+    const oud = await DB.getAll('monteurs');
+    const nieuw = seedMonteurs(seed.monteurs).map(m => {
+      const o = oud.find(x => norm(x.naam) === norm(m.naam));
+      return o ? { ...o, prefix: o.prefix || m.prefix } : m;
+    });
+    await DB.clear('monteurs');
+    await DB.bulkPut('monteurs', nieuw);
+    App.settings.monteurs = seed.monteurs;
+    if (App.settings.monteurId && !nieuw.some(m => m.id === App.settings.monteurId)) {
+      App.settings.monteurId = '';
+      App.settings.mijnNaam = '';
+    }
+  }
+  if (seed.versie) App.settings.seedVersie = seed.versie;
+  await saveSettings(true);
+}
+
+/* =========================================================================
    Boot
    ========================================================================= */
 async function boot() {
@@ -1718,25 +1778,10 @@ async function boot() {
   // A new seed version replaces all customers and machines on this device once. Not with a central
   // database: there the server's lists are leading (use Beheer to upload them there instead).
   if (window.SEED?.versie && SEED.klanten?.length && App.settings.seedVersie !== SEED.versie && !centraalIngesteld()) {
-    await DB.clear('klanten');
-    await DB.clear('machines');
-    await DB.bulkPut('klanten', SEED.klanten);
-    await DB.bulkPut('machines', SEED.machines);
-    if (SEED.monteurs?.length) {
-      // Monteurs who stay keep their prefix and beheerder flag; a removed monteur on this device signs in again
-      const oud = await DB.getAll('monteurs');
-      const nieuw = seedMonteurs(SEED.monteurs).map(m => oud.find(o => norm(o.naam) === norm(m.naam)) || m);
-      await DB.clear('monteurs');
-      await DB.bulkPut('monteurs', nieuw);
-      App.settings.monteurs = SEED.monteurs;
-      if (App.settings.monteurId && !nieuw.some(m => m.id === App.settings.monteurId)) {
-        App.settings.monteurId = '';
-        App.settings.mijnNaam = '';
-      }
-    }
-    App.settings.seedVersie = SEED.versie;
-    await saveSettings(true);
+    await vervangStartgegevens(SEED);
   }
+  // Central database switched off: changes still waiting to be sent will never go anywhere
+  if (centraalUit()) await DB.clear('outbox');
   // Devices from before the central database have no monteurs list yet
   if (window.SEED && (await DB.count('monteurs')) === 0) await DB.bulkPut('monteurs', seedMonteurs(SEED.monteurs || []));
   await loadCache();
