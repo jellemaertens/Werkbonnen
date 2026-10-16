@@ -1642,6 +1642,18 @@ async function boot() {
     await DB.clear('machines');
     await DB.bulkPut('klanten', SEED.klanten);
     await DB.bulkPut('machines', SEED.machines);
+    if (SEED.monteurs?.length) {
+      // Monteurs who stay keep their prefix and beheerder flag; a removed monteur on this device signs in again
+      const oud = await DB.getAll('monteurs');
+      const nieuw = seedMonteurs(SEED.monteurs).map(m => oud.find(o => norm(o.naam) === norm(m.naam)) || m);
+      await DB.clear('monteurs');
+      await DB.bulkPut('monteurs', nieuw);
+      App.settings.monteurs = SEED.monteurs;
+      if (App.settings.monteurId && !nieuw.some(m => m.id === App.settings.monteurId)) {
+        App.settings.monteurId = '';
+        App.settings.mijnNaam = '';
+      }
+    }
     App.settings.seedVersie = SEED.versie;
     await saveSettings(true);
   }
