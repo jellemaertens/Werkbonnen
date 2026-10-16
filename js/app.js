@@ -225,7 +225,8 @@ function saveSettings(immediate) {
 
 const klantById = id => App.klanten.find(k => k.id === id);
 const machinesOf = klantId => App.machines.filter(m => m.klantId === klantId).sort((a, b) => (a.soort + a.model).localeCompare(b.soort + b.model));
-const snapKlant = k => ({ nummer: k.nummer || '', naam: k.naam, groep: k.groep || '', adres: k.adres || '', postcode: k.postcode || '', gemeente: k.gemeente || '', land: k.land || '', contact: k.contact || '', email: k.email || '', telefoon: k.telefoon || '' });
+const snapKlant = k => ({ nummer: k.nummer || '', naam: k.naam, groep: k.groep || '', adres: k.adres || '', postcode: k.postcode || '', gemeente: k.gemeente || '', land: k.land || '', contact: k.contact || '', email: k.email || '', telefoon: k.telefoon || '', openingsuren: k.openingsuren || '', sluitingsdag: k.sluitingsdag || '' });
+const klantUren = k => k ? [k.openingsuren && `Open: ${k.openingsuren}`, k.sluitingsdag && `Gesloten: ${k.sluitingsdag}`].filter(Boolean).join(' · ') : '';
 const snapMachine = m => ({ model: m.model, fabrikant: m.fabrikant || '', soort: m.soort || '', serienummer: m.serienummer || '' });
 const klantAdres = k => k ? [k.adres, [k.postcode, k.gemeente].filter(Boolean).join(' '), k.land].filter(Boolean).join('\n') : '';
 const machineLabel = m => m ? [m.model, m.fabrikant && `(${m.fabrikant})`].filter(Boolean).join(' ') : '';
@@ -373,7 +374,7 @@ function openPicker({ title, items, render, haystack, onPick, keepOpen = false, 
 
 /* ---------- Klant & machine forms (modals) ---------- */
 function openKlantModal(klant, onSaved) {
-  const k = klant ? clone(klant) : { id: uid(), nummer: '', naam: '', groep: '', adres: '', postcode: '', gemeente: '', land: 'BE', contact: '', email: '', telefoon: '' };
+  const k = klant ? clone(klant) : { id: uid(), nummer: '', naam: '', groep: '', adres: '', postcode: '', gemeente: '', land: 'BE', contact: '', email: '', telefoon: '', openingsuren: '', sluitingsdag: '' };
   const f = (name, label, type = 'text', cls = '') => `<label class="field ${cls}"><span>${label}</span><input type="${type}" name="${name}" value="${esc(k[name])}"></label>`;
   const m = openModal({
     title: klant ? 'Klant bewerken' : 'Nieuwe klant',
@@ -383,6 +384,7 @@ function openKlantModal(klant, onSaved) {
       ${f('adres', 'Adres', 'text', 'full')}
       ${f('postcode', 'Postcode')}${f('gemeente', 'Gemeente')}${f('land', 'Land')}
       ${f('contact', 'Contactpersoon')}${f('telefoon', 'Telefoon', 'tel')}${f('email', 'E-mail', 'email')}
+      ${f('openingsuren', 'Openingsuren', 'text', 'full')}${f('sluitingsdag', 'Sluitingsdag(en)', 'text', 'full')}
     </form>`,
     foot: '<button type="button" class="btn" data-close>Annuleren</button><button type="button" class="btn primary" data-save>Opslaan</button>',
   });
@@ -622,7 +624,8 @@ function secKlant() {
     klantHtml = `<div class="picked">
       <div><div class="who">${esc(wb.klant.naam)}${wb.klant.nummer ? ` <span class="muted small">#${esc(wb.klant.nummer)}</span>` : ''}</div>
       <div class="addr">${esc(klantAdres(wb.klant))}</div>
-      ${wb.klant.contact || wb.klant.telefoon || wb.klant.email ? `<div class="addr">${esc([wb.klant.contact, wb.klant.telefoon, wb.klant.email].filter(Boolean).join(' · '))}</div>` : ''}</div>
+      ${wb.klant.contact || wb.klant.telefoon || wb.klant.email ? `<div class="addr">${esc([wb.klant.contact, wb.klant.telefoon, wb.klant.email].filter(Boolean).join(' · '))}</div>` : ''}
+      ${klantUren(klantById(wb.klantId) || wb.klant) ? `<div class="addr">🕘 ${esc(klantUren(klantById(wb.klantId) || wb.klant))}</div>` : ''}</div>
       <button type="button" class="btn small" data-action="pick-klant">Wijzig</button>
     </div>`;
   } else {
@@ -1136,6 +1139,8 @@ async function viewKlant(id) {
         <div><div class="label">Contact</div><div>${esc([k.contact, k.telefoon, k.email].filter(Boolean).join(' · ')) || '<span class="muted">—</span>'}</div></div>
         <div><div class="label">Klantnummer</div><div>${esc(k.nummer) || '<span class="muted">—</span>'}</div></div>
         <div><div class="label">Klantgroep</div><div>${esc(k.groep) || '<span class="muted">—</span>'}</div></div>
+        <div><div class="label">Openingsuren</div><div>${esc(k.openingsuren) || '<span class="muted">—</span>'}</div></div>
+        <div><div class="label">Sluitingsdag(en)</div><div>${esc(k.sluitingsdag) || '<span class="muted">—</span>'}</div></div>
       </div>
     </section>
     <section class="card"><h2>Machines <button type="button" class="btn small" data-add-machine>＋ Machine</button></h2>
@@ -1630,6 +1635,16 @@ async function boot() {
     await loadSeed();
   }
   App.settings = mergeDeep(DEFAULT_SETTINGS, stored);
+  // A new seed version replaces all customers and machines on this device once. Not with a central
+  // database: there the server's lists are leading (use Beheer to upload them there instead).
+  if (window.SEED?.versie && SEED.klanten?.length && App.settings.seedVersie !== SEED.versie && !centraalIngesteld()) {
+    await DB.clear('klanten');
+    await DB.clear('machines');
+    await DB.bulkPut('klanten', SEED.klanten);
+    await DB.bulkPut('machines', SEED.machines);
+    App.settings.seedVersie = SEED.versie;
+    await saveSettings(true);
+  }
   // Devices from before the central database have no monteurs list yet
   if (window.SEED && (await DB.count('monteurs')) === 0) await DB.bulkPut('monteurs', seedMonteurs(SEED.monteurs || []));
   await loadCache();
