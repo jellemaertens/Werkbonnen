@@ -1,0 +1,15 @@
+# Echte klant- en onderdelengegevens: enkel lokaal, nooit in de (publieke) repository
+data/seed.local.js
+*.local.js
+
+# Testgegevens en exports
+*.csv
+*.xlsx
+*.pdf
+werkbonnen-backup-*.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

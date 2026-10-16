@@ -1,0 +1,15 @@
+{
+  "name": "BOSS paints Werkbonnen",
+  "short_name": "Werkbonnen",
+  "description": "Werkbonnen invullen en laten ondertekenen bij de klant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#E2E7DC",
+  "theme_color": "#0D3932",
+  "lang": "nl",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
