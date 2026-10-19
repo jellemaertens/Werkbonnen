@@ -676,10 +676,10 @@ function renderWerkbon() {
     ${locked ? `<div class="locked-note"><span>✓ Deze werkbon is afgerond${wb.handtekening ? ` en ondertekend door <b>${esc(wb.handtekening.naam)}</b>` : ''}. Hij kan niet meer gewijzigd worden.</span><button type="button" class="btn small" data-action="reopen">Heropenen</button></div>
     <section class="card docs"><h2>Documenten</h2>
       <div class="doc-buttons">
-        <button type="button" class="btn primary doc" data-action="print"><span class="doc-icon" aria-hidden="true">📄</span><span><b>Werkbon</b><br><span class="small">Downloaden (PDF) of afdrukken</span></span></button>
+        <button type="button" class="btn primary doc" data-action="print"><span class="doc-icon" aria-hidden="true">📄</span><span><b>Werkbon</b><br><span class="small">PDF met de handtekening van de klant</span></span></button>
         <button type="button" class="btn doc" data-action="proforma"><span class="doc-icon" aria-hidden="true">🧾</span><span><b>Pro forma-factuur</b><br><span class="small">Kosten van het bezoek met prijzen en BTW (PDF)</span></span></button>
       </div>
-      <p class="small muted" style="margin:10px 0 0">Kies in het printvenster <b>Opslaan als PDF</b> om het bestand te downloaden.</p>
+      <p class="small muted" style="margin:10px 0 0">Je krijgt een PDF-bestand. Open het om het te bewaren of af te drukken, of deel het meteen.</p>
     </section>` : ''}
     <fieldset id="wb-form" ${locked ? 'disabled' : ''} style="border:0;padding:0;margin:0;min-width:0">
       ${secKlant()}
@@ -696,7 +696,7 @@ function renderWerkbon() {
       <span class="saved hide-sm" id="saved"></span>
       <a class="btn hide-sm" href="#/">Overzicht</a>
       ${locked ? '<button type="button" class="btn hide-sm" data-action="proforma">Pro forma</button>' : ''}
-      <button type="button" class="btn primary" data-action="print">${locked ? 'Werkbon' : 'PDF / Afdrukken'}</button>
+      <button type="button" class="btn primary" data-action="print">${locked ? 'Werkbon' : 'PDF'}</button>
     </div></div>`);
   bindWerkbon();
 }
@@ -956,10 +956,10 @@ function bindWerkbon() {
       }
       case 'print':
         await flushSave();
-        return printWerkbon(wb, App.settings);
+        return pdfWerkbon(wb, App.settings);
       case 'proforma':
         await flushSave();
-        return printProforma(wb, App.settings);
+        return pdfProforma(wb, App.settings);
       case 'duplicate': {
         await flushSave();
         const copy = await newWerkbon(wb.monteur || undefined);
@@ -1506,7 +1506,7 @@ async function viewBeheer() {
     if (!row) return;
     try {
       const wb = await Sync.fetchWerkbon(row.dataset.wb);
-      if (wb) printWerkbon(wb, App.settings); else toast('Werkbon niet gevonden');
+      if (wb) pdfWerkbon(wb, App.settings); else toast('Werkbon niet gevonden');
     } catch (err) { toast(`Ophalen mislukt: ${err.message}`); }
   });
   $('[data-export-all]').addEventListener('click', async () => {

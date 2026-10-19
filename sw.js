@@ -1,8 +1,9 @@
 // Offline support: network first (so updates arrive immediately), cached copy when offline.
-const CACHE = 'werkbonnen-v5';
+const CACHE = 'werkbonnen-v6';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'icons/icon.svg',
-  'css/app.css', 'js/config.js', 'js/db.js', 'js/sync.js', 'js/signature.js', 'js/print.js', 'js/app.js', 'data/seed.js',
+  'css/app.css', 'js/config.js', 'js/db.js', 'js/sync.js', 'js/signature.js', 'js/print.js', 'js/pdf.js', 'js/app.js', 'data/seed.js',
+  'assets/vendor/html2canvas.min.js', 'assets/vendor/jspdf.umd.min.js',
   'assets/BP-Baseline-RGB-POS-NL.png', 'assets/logo_BOSS_wit.png', 'assets/logo_BOSS_NL_baseline_wit.png',
   'assets/fonts/MonaSans-Regular.otf', 'assets/fonts/MonaSans-Bold.otf',
   'assets/fonts/MonaSansCondensed-Regular.otf', 'assets/fonts/MonaSansCondensed-Bold.otf',
