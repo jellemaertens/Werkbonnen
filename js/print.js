@@ -48,6 +48,8 @@ const PRINT_CSS = `
     .p-table .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .p-table .code { color: #226E55; font-weight: 700; white-space: nowrap; }
     .p-table .muted { color: #4F5E58; font-size: 8.5pt; }
+    .p-tag { display: inline-block; margin-left: 2mm; padding: .2mm 1.6mm; border-radius: 1mm; background: #A1D377; color: #0D3932; font: 700 7.5pt/1.4 "Mona Sans Condensed", "Mona Sans", Arial, sans-serif; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
+    .p-totals .garantie td { color: #226E55; font-weight: 700; }
     .p-table tr { break-inside: avoid; }
 
     .p-costrow { display: grid; grid-template-columns: 1fr 72mm; gap: 3mm; align-items: start; margin-top: 3mm; break-inside: avoid; }
@@ -122,18 +124,22 @@ function printPage(b, inner) {
   </div>`;
 }
 
-// Prestaties en kosten as [omschrijving, aantal (tekst), eenheidsprijs, totaal]
+// Prestaties en kosten as [omschrijving, aantal (tekst), eenheidsprijs, totaal, garantie]
 function kostenRegels(wb) {
   const rows = [];
-  if (parseNum(wb.werkuren)) rows.push([`Werkuren${wb.interventie ? ' ' + wb.interventie.toLowerCase() : ''}`, `${fmtNum(parseNum(wb.werkuren))} u`, parseNum(wb.uurtarief), parseNum(wb.werkuren) * parseNum(wb.uurtarief)]);
-  if (wb.aanrijkost.actief) rows.push(['Aanrijkost', '1', parseNum(wb.aanrijkost.bedrag), parseNum(wb.aanrijkost.bedrag)]);
-  if (wb.brandstoftoeslag.actief) rows.push(['Brandstoftoeslag', '1', parseNum(wb.brandstoftoeslag.bedrag), parseNum(wb.brandstoftoeslag.bedrag)]);
-  for (const l of wb.extra) rows.push([l.omschrijving, fmtNum(parseNum(l.aantal)), parseNum(l.prijs), parseNum(l.aantal) * parseNum(l.prijs)]);
+  if (parseNum(wb.werkuren)) rows.push([`Werkuren${wb.interventie ? ' ' + wb.interventie.toLowerCase() : ''}`, `${fmtNum(parseNum(wb.werkuren))} u`, parseNum(wb.uurtarief), parseNum(wb.werkuren) * parseNum(wb.uurtarief), !!wb.werkurenGarantie]);
+  if (wb.aanrijkost.actief) rows.push(['Aanrijkost', '1', parseNum(wb.aanrijkost.bedrag), parseNum(wb.aanrijkost.bedrag), !!wb.aanrijkost.garantie]);
+  if (wb.brandstoftoeslag.actief) rows.push(['Brandstoftoeslag', '1', parseNum(wb.brandstoftoeslag.bedrag), parseNum(wb.brandstoftoeslag.bedrag), false]);
+  for (const l of wb.extra) rows.push([l.omschrijving, fmtNum(parseNum(l.aantal)), parseNum(l.prijs), parseNum(l.aantal) * parseNum(l.prijs), false]);
   return rows;
 }
 
+const garantieTag = on => on ? '<span class="p-tag">Garantie · 100% korting</span>' : '';
+
 function totalsHtmlPrint(wb, t) {
   return `<table class="p-totals">
+      ${t.garantie ? `<tr><td>Subtotaal</td><td>${fmtEur(t.bruto)}</td></tr>
+      <tr class="garantie"><td>Garantie (100% korting)</td><td>− ${fmtEur(t.garantie)}</td></tr>` : ''}
       <tr><td>Totaal excl. BTW</td><td>${fmtEur(t.excl)}</td></tr>
       <tr><td>BTW ${fmtNum(parseNum(wb.btw))}%</td><td>${fmtEur(t.btw)}</td></tr>
       <tr class="g"><td>Totaal incl. BTW</td><td>${fmtEur(t.incl)}</td></tr>
@@ -151,7 +157,7 @@ function werkbonPrintHtml(wb, s) {
   // Costs on the left, totals beside them on the right
   const costTable = costRows.length ? `<table class="p-table">
       <thead><tr><th>Prestaties en kosten</th><th class="r">Aantal</th>${prices ? '<th class="r">Tarief</th><th class="r">Totaal</th>' : ''}</tr></thead>
-      <tbody>${costRows.map(([d, q, p, tot]) => `<tr><td>${esc(d)}</td><td class="r">${esc(q)}</td>${prices ? `<td class="r">${fmtEur(p)}</td><td class="r">${fmtEur(tot)}</td>` : ''}</tr>`).join('')}</tbody>
+      <tbody>${costRows.map(([d, q, p, tot, gar]) => `<tr><td>${esc(d)}${garantieTag(gar)}</td><td class="r">${esc(q)}</td>${prices ? `<td class="r">${fmtEur(p)}</td><td class="r">${fmtEur(tot)}</td>` : ''}</tr>`).join('')}</tbody>
     </table>` : '';
   const totalsTable = prices ? totalsHtmlPrint(wb, t) : '';
 
@@ -206,7 +212,7 @@ function werkbonPrintHtml(wb, s) {
 
     ${wb.onderdelen.length ? `<table class="p-table">
       <thead><tr><th>Artikelnummer</th><th>Gebruikte onderdelen</th><th class="r">Aantal</th>${prices ? '<th class="r">Prijs</th><th class="r">Totaal</th>' : ''}</tr></thead>
-      <tbody>${wb.onderdelen.map(l => `<tr><td class="code">${esc(l.artikelnr)}</td><td>${esc(l.omschrijving)}</td><td class="r">${fmtNum(parseNum(l.aantal))}</td>
+      <tbody>${wb.onderdelen.map(l => `<tr><td class="code">${esc(l.artikelnr)}</td><td>${esc(l.omschrijving)}${garantieTag(l.garantie)}</td><td class="r">${fmtNum(parseNum(l.aantal))}</td>
         ${prices ? `<td class="r">${fmtEur(parseNum(l.prijs))}</td><td class="r">${fmtEur(parseNum(l.aantal) * parseNum(l.prijs))}</td>` : ''}</tr>`).join('')}</tbody>
     </table>` : ''}
 
@@ -241,9 +247,9 @@ function proformaPrintHtml(wb, s) {
   const regels = [
     ...wb.onderdelen.map(l => ({
       code: l.artikelnr, oms: l.omschrijving, aantal: fmtNum(parseNum(l.aantal)),
-      prijs: parseNum(l.prijs), totaal: parseNum(l.aantal) * parseNum(l.prijs),
+      prijs: parseNum(l.prijs), totaal: parseNum(l.aantal) * parseNum(l.prijs), garantie: !!l.garantie,
     })),
-    ...kostenRegels(wb).map(([oms, aantal, prijs, totaal]) => ({ code: '', oms, aantal, prijs, totaal })),
+    ...kostenRegels(wb).map(([oms, aantal, prijs, totaal, garantie]) => ({ code: '', oms, aantal, prijs, totaal, garantie })),
   ];
 
   const akkoord = wb.handtekening
@@ -284,7 +290,7 @@ function proformaPrintHtml(wb, s) {
     <table class="p-table">
       <thead><tr><th>Omschrijving</th><th class="r">Aantal</th><th class="r">Eenheidsprijs</th><th class="r">BTW</th><th class="r">Totaal excl. BTW</th></tr></thead>
       <tbody>${regels.map(r => `<tr>
-        <td>${r.code ? `<span class="code">${esc(r.code)}</span> &nbsp;` : ''}${esc(r.oms)}</td>
+        <td>${r.code ? `<span class="code">${esc(r.code)}</span> &nbsp;` : ''}${esc(r.oms)}${garantieTag(r.garantie)}</td>
         <td class="r">${esc(r.aantal)}</td><td class="r">${fmtEur(r.prijs)}</td><td class="r">${btwPct}</td><td class="r">${fmtEur(r.totaal)}</td>
       </tr>`).join('') || '<tr><td colspan="5">—</td></tr>'}</tbody>
     </table>

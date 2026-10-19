@@ -325,14 +325,20 @@ async function newWerkbon(monteur = App.settings.mijnNaam || '') {
 }
 
 function totals(wb) {
-  const onderdelen = sum(wb.onderdelen, l => parseNum(l.aantal) * parseNum(l.prijs));
+  const lijn = l => parseNum(l.aantal) * parseNum(l.prijs);
+  const onderdelen = sum(wb.onderdelen, lijn);
   const arbeid = parseNum(wb.werkuren) * parseNum(wb.uurtarief);
-  const verplaatsing = (wb.aanrijkost.actief ? parseNum(wb.aanrijkost.bedrag) : 0)
-    + (wb.brandstoftoeslag.actief ? parseNum(wb.brandstoftoeslag.bedrag) : 0);
-  const overige = sum(wb.extra, l => parseNum(l.aantal) * parseNum(l.prijs));
-  const excl = round2(onderdelen + arbeid + verplaatsing + overige);
+  const aanrij = wb.aanrijkost.actief ? parseNum(wb.aanrijkost.bedrag) : 0;
+  const verplaatsing = aanrij + (wb.brandstoftoeslag.actief ? parseNum(wb.brandstoftoeslag.bedrag) : 0);
+  const overige = sum(wb.extra, lijn);
+  // Garantie: 100% korting on the marked parts, the werkuren and/or the aanrijkost
+  const garantie = sum(wb.onderdelen.filter(l => l.garantie), lijn)
+    + (wb.werkurenGarantie ? arbeid : 0)
+    + (wb.aanrijkost.garantie ? aanrij : 0);
+  const bruto = round2(onderdelen + arbeid + verplaatsing + overige);
+  const excl = round2(bruto - garantie);
   const btw = round2(excl * parseNum(wb.btw) / 100);
-  return { onderdelen: round2(onderdelen), arbeid: round2(arbeid), verplaatsing: round2(verplaatsing), overige: round2(overige), excl, btw, incl: round2(excl + btw) };
+  return { onderdelen: round2(onderdelen), arbeid: round2(arbeid), verplaatsing: round2(verplaatsing), overige: round2(overige), bruto, garantie: round2(garantie), excl, btw, incl: round2(excl + btw) };
 }
 
 function hoursBetween(start, end) {
@@ -608,14 +614,16 @@ async function viewWerkbonnen() {
 
 function exportWerkbonnenCsv(list) {
   const t = App.settings.tarieven;
-  const rows = [['Werkbon', 'Datum', 'Status', 'Klantnummer', 'Klant', 'Gemeente', 'Machine', 'Serienummer', 'Monteur', 'Interventie', 'Referentie', 'Artikel', 'Omschrijving', 'Aantal', 'Prijs', 'Totaal excl. BTW', 'Ondertekend door']];
+  const rows = [['Werkbon', 'Datum', 'Status', 'Klantnummer', 'Klant', 'Gemeente', 'Machine', 'Serienummer', 'Monteur', 'Interventie', 'Referentie', 'Artikel', 'Omschrijving', 'Aantal', 'Prijs', 'Garantie (100% korting)', 'Totaal excl. BTW', 'Ondertekend door']];
   for (const w of list) {
     const base = [w.nummer, fmtDate(w.datum), w.status, w.klant?.nummer, w.klant?.naam, w.klant?.gemeente, machineLabel(w.machine), w.machine?.serienummer, w.monteur, w.interventie, w.referentie];
     const signer = w.handtekening?.naam || (w.nietOndertekend ? `Niet ondertekend: ${w.nietOndertekend}` : '');
-    const line = (code, desc, qty, price) => rows.push([...base, code, desc, csvNum(qty), csvNum(price), csvNum(qty * price), signer]);
-    for (const l of w.onderdelen) line(l.artikelnr, l.omschrijving, parseNum(l.aantal), parseNum(l.prijs));
-    if (parseNum(w.werkuren)) line(t.codeUren, `Werkuren ${w.interventie || ''}`.trim(), parseNum(w.werkuren), parseNum(w.uurtarief));
-    if (w.aanrijkost.actief) line(t.codeVoorrij, 'Aanrijkost', 1, parseNum(w.aanrijkost.bedrag));
+    // A garantie line keeps its price but is not charged
+    const line = (code, desc, qty, price, garantie = false) =>
+      rows.push([...base, code, desc, csvNum(qty), csvNum(price), garantie ? 'garantie' : '', csvNum(garantie ? 0 : qty * price), signer]);
+    for (const l of w.onderdelen) line(l.artikelnr, l.omschrijving, parseNum(l.aantal), parseNum(l.prijs), !!l.garantie);
+    if (parseNum(w.werkuren)) line(t.codeUren, `Werkuren ${w.interventie || ''}`.trim(), parseNum(w.werkuren), parseNum(w.uurtarief), !!w.werkurenGarantie);
+    if (w.aanrijkost.actief) line(t.codeVoorrij, 'Aanrijkost', 1, parseNum(w.aanrijkost.bedrag), !!w.aanrijkost.garantie);
     if (w.brandstoftoeslag.actief) line(t.codeBrandstof, 'Brandstoftoeslag', 1, parseNum(w.brandstoftoeslag.bedrag));
     for (const l of w.extra) line('', l.omschrijving, parseNum(l.aantal), parseNum(l.prijs));
   }
@@ -773,6 +781,7 @@ function secOnderdelen() {
       <td class="desc">
         <input data-f="onderdelen.${i}.omschrijving" value="${esc(l.omschrijving)}" aria-label="Omschrijving">
         ${l.artikelnr ? `<div class="code">${esc(l.artikelnr)}</div>` : ''}
+        ${garantieCheck(`onderdelen.${i}.garantie`, l.garantie)}
       </td>
       <td class="num w-qty"><input inputmode="decimal" data-f="onderdelen.${i}.aantal" data-t="num" value="${esc(numVal(l.aantal))}" aria-label="Aantal"></td>
       <td class="num w-price"><input inputmode="decimal" data-f="onderdelen.${i}.prijs" data-t="num" value="${esc(numVal(l.prijs))}" aria-label="Prijs"></td>
@@ -788,6 +797,10 @@ function secOnderdelen() {
       <button type="button" class="btn" data-action="add-free-part">＋ Vrije regel</button>
     </div>`);
 }
+
+// Checkbox for 100% korting (garantie) on a parts line, the werkuren or the aanrijkost
+const garantieCheck = (path, checked) =>
+  `<label class="check garantie-check"><input type="checkbox" data-f="${path}" ${checked ? 'checked' : ''}> Garantie (100% korting)</label>`;
 
 function secKosten() {
   const wb = App.wb;
@@ -806,13 +819,14 @@ function secKosten() {
       <span class="label lbl">&nbsp;</span><span class="label right">Aantal / uren</span><span class="label right">Tarief</span><span class="label right">Bedrag</span>
     </div>
     <div class="cost-row">
-      <div class="lbl"><b>Werkuren</b><br>${auto}</div>
+      <div class="lbl"><b>Werkuren</b><br>${auto}${garantieCheck('werkurenGarantie', wb.werkurenGarantie)}</div>
       <input inputmode="decimal" data-f="werkuren" data-t="num" value="${esc(numVal(wb.werkuren))}" aria-label="Werkuren">
       <input inputmode="decimal" data-f="uurtarief" data-t="num" value="${esc(numVal(wb.uurtarief))}" aria-label="Uurtarief">
       <div class="amount" data-amount="arbeid">${fmtEur(t.arbeid)}</div>
     </div>
     <div class="cost-row">
-      <label class="check lbl"><input type="checkbox" data-f="aanrijkost.actief" ${wb.aanrijkost.actief ? 'checked' : ''}> <b>Aanrijkost</b></label>
+      <div class="lbl"><label class="check"><input type="checkbox" data-f="aanrijkost.actief" ${wb.aanrijkost.actief ? 'checked' : ''}> <b>Aanrijkost</b></label>
+        ${garantieCheck('aanrijkost.garantie', wb.aanrijkost.garantie)}</div>
       <span></span>
       <input inputmode="decimal" data-f="aanrijkost.bedrag" data-t="num" value="${esc(numVal(wb.aanrijkost.bedrag))}" aria-label="Aanrijkost">
       <div class="amount" data-amount="aanrijkost">${fmtEur(wb.aanrijkost.actief ? parseNum(wb.aanrijkost.bedrag) : 0)}</div>
@@ -835,6 +849,8 @@ function totalsHtml(t) {
     <span>Werkuren</span><span class="right">${fmtEur(t.arbeid)}</span>
     <span>Verplaatsing</span><span class="right">${fmtEur(t.verplaatsing)}</span>
     ${t.overige ? `<span>Overige</span><span class="right">${fmtEur(t.overige)}</span>` : ''}
+    ${t.garantie ? `<span>Subtotaal</span><span class="right">${fmtEur(t.bruto)}</span>
+    <span class="garantie">Garantie (100% korting)</span><span class="garantie right">− ${fmtEur(t.garantie)}</span>` : ''}
     <span><b>Totaal excl. BTW</b></span><span class="right"><b>${fmtEur(t.excl)}</b></span>
     <span>BTW ${fmtNum(parseNum(wb.btw))}%</span><span class="right">${fmtEur(t.btw)}</span>
     <span class="grand">Totaal incl. BTW</span><span class="grand right">${fmtEur(t.incl)}</span>`;

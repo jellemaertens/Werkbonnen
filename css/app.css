@@ -185,6 +185,10 @@ input[type="checkbox"] { width: 22px; min-height: 22px; height: 22px; accent-col
 .cost-row:last-child { border-bottom: 0; }
 .cost-row .amount { text-align: right; font-weight: 600; white-space: nowrap; }
 
+.garantie-check { display: flex; min-height: 32px; gap: 8px; font-size: .85rem; color: var(--boss-forest); margin-top: 2px; }
+.garantie-check input { width: 18px; min-height: 18px; height: 18px; }
+.totals .garantie { color: var(--boss-forest); font-weight: 600; }
+
 .totals { margin-left: auto; max-width: 340px; display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; }
 .totals .grand { font-size: 1.2rem; font-weight: 700; border-top: 2px solid var(--text); padding-top: 6px; }
 
