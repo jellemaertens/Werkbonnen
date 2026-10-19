@@ -614,13 +614,13 @@ async function viewWerkbonnen() {
 
 function exportWerkbonnenCsv(list) {
   const t = App.settings.tarieven;
-  const rows = [['Werkbon', 'Datum', 'Status', 'Klantnummer', 'Klant', 'Gemeente', 'Machine', 'Serienummer', 'Monteur', 'Interventie', 'Referentie', 'Artikel', 'Omschrijving', 'Aantal', 'Prijs', 'Garantie (100% korting)', 'Totaal excl. BTW', 'Ondertekend door']];
+  const rows = [['Werkbon', 'Datum', 'Status', 'Klantnummer', 'Klant', 'Gemeente', 'Machine', 'Serienummer', 'Monteur', 'Interventie', 'Referentie', 'Artikel', 'Omschrijving', 'Aantal', 'Prijs', '100% korting', 'Totaal excl. BTW', 'Ondertekend door']];
   for (const w of list) {
     const base = [w.nummer, fmtDate(w.datum), w.status, w.klant?.nummer, w.klant?.naam, w.klant?.gemeente, machineLabel(w.machine), w.machine?.serienummer, w.monteur, w.interventie, w.referentie];
     const signer = w.handtekening?.naam || (w.nietOndertekend ? `Niet ondertekend: ${w.nietOndertekend}` : '');
     // A garantie line keeps its price but is not charged
     const line = (code, desc, qty, price, garantie = false) =>
-      rows.push([...base, code, desc, csvNum(qty), csvNum(price), garantie ? 'garantie' : '', csvNum(garantie ? 0 : qty * price), signer]);
+      rows.push([...base, code, desc, csvNum(qty), csvNum(price), garantie ? 'ja' : '', csvNum(garantie ? 0 : qty * price), signer]);
     for (const l of w.onderdelen) line(l.artikelnr, l.omschrijving, parseNum(l.aantal), parseNum(l.prijs), !!l.garantie);
     if (parseNum(w.werkuren)) line(t.codeUren, `Werkuren ${w.interventie || ''}`.trim(), parseNum(w.werkuren), parseNum(w.uurtarief), !!w.werkurenGarantie);
     if (w.aanrijkost.actief) line(t.codeVoorrij, 'Aanrijkost', 1, parseNum(w.aanrijkost.bedrag), !!w.aanrijkost.garantie);
@@ -800,7 +800,7 @@ function secOnderdelen() {
 
 // Checkbox for 100% korting (garantie) on a parts line, the werkuren or the aanrijkost
 const garantieCheck = (path, checked) =>
-  `<label class="check garantie-check"><input type="checkbox" data-f="${path}" ${checked ? 'checked' : ''}> Garantie (100% korting)</label>`;
+  `<label class="check garantie-check"><input type="checkbox" data-f="${path}" ${checked ? 'checked' : ''}> 100% korting</label>`;
 
 function secKosten() {
   const wb = App.wb;
@@ -850,7 +850,7 @@ function totalsHtml(t) {
     <span>Verplaatsing</span><span class="right">${fmtEur(t.verplaatsing)}</span>
     ${t.overige ? `<span>Overige</span><span class="right">${fmtEur(t.overige)}</span>` : ''}
     ${t.garantie ? `<span>Subtotaal</span><span class="right">${fmtEur(t.bruto)}</span>
-    <span class="garantie">Garantie (100% korting)</span><span class="garantie right">− ${fmtEur(t.garantie)}</span>` : ''}
+    <span class="garantie">100% korting</span><span class="garantie right">− ${fmtEur(t.garantie)}</span>` : ''}
     <span><b>Totaal excl. BTW</b></span><span class="right"><b>${fmtEur(t.excl)}</b></span>
     <span>BTW ${fmtNum(parseNum(wb.btw))}%</span><span class="right">${fmtEur(t.btw)}</span>
     <span class="grand">Totaal incl. BTW</span><span class="grand right">${fmtEur(t.incl)}</span>`;

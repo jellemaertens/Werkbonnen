@@ -134,12 +134,12 @@ function kostenRegels(wb) {
   return rows;
 }
 
-const garantieTag = on => on ? '<span class="p-tag">Garantie · 100% korting</span>' : '';
+const garantieTag = on => on ? '<span class="p-tag">100% korting</span>' : '';
 
 function totalsHtmlPrint(wb, t) {
   return `<table class="p-totals">
       ${t.garantie ? `<tr><td>Subtotaal</td><td>${fmtEur(t.bruto)}</td></tr>
-      <tr class="garantie"><td>Garantie (100% korting)</td><td>− ${fmtEur(t.garantie)}</td></tr>` : ''}
+      <tr class="garantie"><td>100% korting</td><td>− ${fmtEur(t.garantie)}</td></tr>` : ''}
       <tr><td>Totaal excl. BTW</td><td>${fmtEur(t.excl)}</td></tr>
       <tr><td>BTW ${fmtNum(parseNum(wb.btw))}%</td><td>${fmtEur(t.btw)}</td></tr>
       <tr class="g"><td>Totaal incl. BTW</td><td>${fmtEur(t.incl)}</td></tr>
