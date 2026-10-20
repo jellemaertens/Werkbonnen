@@ -147,19 +147,16 @@ function totalsHtmlPrint(wb, t) {
 }
 
 /* ---------- Werkbon ---------- */
+// The werkbon never shows prices, totals or discounts: those are only on the pro forma
 function werkbonPrintHtml(wb, s) {
   const b = s.bedrijf;
-  const t = totals(wb);
-  const prices = s.prijzenOpWerkbon;
   const aanleiding = [wb.interventie, wb.melding].filter(Boolean).join(' — ');
   const costRows = kostenRegels(wb);
 
-  // Costs on the left, totals beside them on the right
   const costTable = costRows.length ? `<table class="p-table">
-      <thead><tr><th>Prestaties en kosten</th><th class="r">Aantal</th>${prices ? '<th class="r">Tarief</th><th class="r">Totaal</th>' : ''}</tr></thead>
-      <tbody>${costRows.map(([d, q, p, tot, gar]) => `<tr><td>${esc(d)}${garantieTag(gar)}</td><td class="r">${esc(q)}</td>${prices ? `<td class="r">${fmtEur(p)}</td><td class="r">${fmtEur(tot)}</td>` : ''}</tr>`).join('')}</tbody>
+      <thead><tr><th>Prestaties</th><th class="r">Aantal</th></tr></thead>
+      <tbody>${costRows.map(([d, q]) => `<tr><td>${esc(d)}</td><td class="r">${esc(q)}</td></tr>`).join('')}</tbody>
     </table>` : '';
-  const totalsTable = prices ? totalsHtmlPrint(wb, t) : '';
 
   let klantSign;
   if (wb.handtekening) {
@@ -211,12 +208,11 @@ function werkbonPrintHtml(wb, s) {
     <div class="p-sec"><div class="p-sec-h">Uitgevoerde werkzaamheden</div><div class="p-sec-b">${printLines(wb.werkzaamheden) || '—'}</div></div>
 
     ${wb.onderdelen.length ? `<table class="p-table">
-      <thead><tr><th>Artikelnummer</th><th>Gebruikte onderdelen</th><th class="r">Aantal</th>${prices ? '<th class="r">Prijs</th><th class="r">Totaal</th>' : ''}</tr></thead>
-      <tbody>${wb.onderdelen.map(l => `<tr><td class="code">${esc(l.artikelnr)}</td><td>${esc(l.omschrijving)}${garantieTag(l.garantie)}</td><td class="r">${fmtNum(parseNum(l.aantal))}</td>
-        ${prices ? `<td class="r">${fmtEur(parseNum(l.prijs))}</td><td class="r">${fmtEur(parseNum(l.aantal) * parseNum(l.prijs))}</td>` : ''}</tr>`).join('')}</tbody>
+      <thead><tr><th>Artikelnummer</th><th>Gebruikte onderdelen</th><th class="r">Aantal</th></tr></thead>
+      <tbody>${wb.onderdelen.map(l => `<tr><td class="code">${esc(l.artikelnr)}</td><td>${esc(l.omschrijving)}</td><td class="r">${fmtNum(parseNum(l.aantal))}</td></tr>`).join('')}</tbody>
     </table>` : ''}
 
-    ${costTable && totalsTable ? `<div class="p-costrow">${costTable}${totalsTable}</div>` : costTable + totalsTable}
+    ${costTable}
 
     <div class="p-bottom">
       <div class="p-card">

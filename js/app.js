@@ -146,7 +146,6 @@ const DEFAULT_SETTINGS = {
     'De machine is weer klaar voor gebruik.',
   ],
   machinesoorten: ['Dispenser', 'Shaker', 'Mixer', 'Andere'],
-  prijzenOpWerkbon: true,
   voorwaarden: 'Door te ondertekenen bevestigt de klant dat de hierboven beschreven werkzaamheden zijn uitgevoerd en dat de gebruikte onderdelen en gepresteerde uren correct zijn.',
 };
 
@@ -1097,7 +1096,6 @@ function openSignModal() {
   if (!validateForSigning(wb)) return;
   fillEndTime(wb);
   const t = totals(wb);
-  const showPrices = App.settings.prijzenOpWerkbon;
   const m = openModal({
     title: 'Akkoord klant',
     wide: true,
@@ -1107,7 +1105,7 @@ function openSignModal() {
         <div class="row-sum"><b>${esc(wb.klant.naam)}</b><span>${esc(wb.nummer)} · ${esc(fmtDate(wb.datum))}</span></div>
         ${wb.machine ? `<div>${esc(machineLabel(wb.machine))}${wb.machine.serienummer ? ' — SN ' + esc(wb.machine.serienummer) : ''}</div>` : ''}
         <div style="white-space:pre-line;margin:8px 0">${esc(wb.werkzaamheden)}</div>
-        <div class="row-sum"><span>${wb.onderdelen.length} onderdeel/onderdelen · ${fmtNum(parseNum(wb.werkuren))} u werk</span>${showPrices ? `<b>${fmtEur(t.incl)} incl. BTW</b>` : ''}</div>
+        <div class="row-sum"><span>${wb.onderdelen.length} onderdeel/onderdelen · ${fmtNum(parseNum(wb.werkuren))} u werk</span></div>
       </div>
       <label class="field" style="margin-bottom:12px"><span>Naam ondertekenaar *</span><input data-name value="${esc(wb.klant.contact || '')}" autocomplete="name"></label>
       <div class="sig-wrap"><canvas></canvas><div class="baseline"></div><div class="hint">Teken hier met je vinger of pen</div></div>
@@ -1621,7 +1619,7 @@ async function viewInstellingen() {
     </section>
 
     <section class="card"><h2>Werkbon</h2>
-      <label class="check"><input type="checkbox" data-s="prijzenOpWerkbon" ${s.prijzenOpWerkbon ? 'checked' : ''}> Prijzen en totalen tonen op de werkbon (PDF) en bij het ondertekenen</label>
+      <p class="small muted" style="margin-top:0">De werkbon toont geen prijzen. Prijzen, korting en BTW staan enkel op de pro forma-factuur.</p>
       <label class="field" style="margin-top:8px"><span>Tekst boven de handtekening</span><textarea data-s="voorwaarden" rows="3">${esc(s.voorwaarden)}</textarea></label>
     </section>
 
