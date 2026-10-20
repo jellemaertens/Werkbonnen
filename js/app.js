@@ -596,9 +596,7 @@ async function viewWerkbonnen() {
           <div class="sub">${esc([w.nummer, fmtDate(w.datum), w.interventie, machineLabel(w.machine)].filter(Boolean).join(' · '))}</div>
         </div>
         <div class="meta">
-          <span class="badge ${w.status}">${w.status === 'afgerond' ? (w.handtekening ? 'Ondertekend' : 'Afgerond') : 'Concept'}</span>
-          <span class="small muted nowrap">${fmtEur(totals(w).excl)} excl.</span>
-        </div>
+          <span class="badge ${w.status}">${w.status === 'afgerond' ? (w.handtekening ? 'Ondertekend' : 'Afgerond') : 'Concept'}</span>        </div>
       </a>`).join('') || `<div class="empty">${all.length ? 'Geen werkbonnen gevonden.' : 'Nog geen werkbonnen. Maak je eerste werkbon aan met <b>＋ Nieuwe werkbon</b>.'}</div>`;
   };
   draw();
@@ -698,7 +696,6 @@ function renderWerkbon() {
     ${secHandtekening()}
     <div class="status-bar"><div class="inner">
       <span class="badge ${wb.status}">${locked ? (wb.handtekening ? 'Ondertekend' : 'Afgerond') : 'Concept'}</span>
-      <span class="total" data-amount="bar">${fmtEur(totals(wb).incl)}</span><span class="muted small hide-sm">incl. BTW</span>
       <span class="spacer"></span>
       <span class="saved hide-sm" id="saved"></span>
       <a class="btn hide-sm" href="#/">Overzicht</a>
@@ -779,17 +776,15 @@ function secOnderdelen() {
     <tr>
       <td class="desc">
         <input data-f="onderdelen.${i}.omschrijving" value="${esc(l.omschrijving)}" aria-label="Omschrijving">
-        ${l.artikelnr ? `<div class="code">${esc(l.artikelnr)}</div>` : ''}
+        ${l.artikelnr ? `<div class="code">${esc(l.artikelnr)}</div>` : vrijePrijs(`onderdelen.${i}.prijs`, l.prijs)}
         ${garantieCheck(`onderdelen.${i}.garantie`, l.garantie)}
       </td>
       <td class="num w-qty"><input inputmode="decimal" data-f="onderdelen.${i}.aantal" data-t="num" value="${esc(numVal(l.aantal))}" aria-label="Aantal"></td>
-      <td class="num w-price"><input inputmode="decimal" data-f="onderdelen.${i}.prijs" data-t="num" value="${esc(numVal(l.prijs))}" aria-label="Prijs"></td>
-      <td class="w-total" data-amount="onderdelen.${i}">${fmtEur(parseNum(l.aantal) * parseNum(l.prijs))}</td>
       <td class="w-del"><button type="button" class="btn icon ghost" data-action="del-line" data-list="onderdelen" data-i="${i}" aria-label="Verwijderen">✕</button></td>
     </tr>`).join('');
   return sec('onderdelen', 'Gebruikte onderdelen', '4', `
     ${wb.onderdelen.length ? `<table class="lines">
-      <thead><tr><th>Omschrijving</th><th class="right">Aantal</th><th class="right">Prijs/st</th><th class="right">Totaal</th><th></th></tr></thead>
+      <thead><tr><th>Omschrijving</th><th class="right">Aantal</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>` : '<p class="muted" style="margin:0 0 8px">Nog geen onderdelen toegevoegd.</p>'}
     <div class="row" style="margin-top:12px">
       <button type="button" class="btn primary" data-action="pick-part">＋ Onderdeel uit lijst</button>
@@ -801,58 +796,34 @@ function secOnderdelen() {
 const garantieCheck = (path, checked) =>
   `<label class="check garantie-check"><input type="checkbox" data-f="${path}" ${checked ? 'checked' : ''}> 100% korting</label>`;
 
+// Price field only for lines without a price of their own (vrije regel, extra kost): it is needed for the pro forma
+const vrijePrijs = (path, prijs) =>
+  `<label class="vrije-prijs"><span>Prijs/st, enkel op de pro forma</span><input inputmode="decimal" data-f="${path}" data-t="num" value="${esc(numVal(prijs))}"></label>`;
+
+// The werkbon screen shows no prices: rates come from Instellingen and the parts list, amounts only on the pro forma
 function secKosten() {
   const wb = App.wb;
-  const t = totals(wb);
   const auto = !wb.werkurenHandmatig && wb.eindtijd ? '<span class="muted small">berekend uit start- en eindtijd</span>' : '';
   const extra = wb.extra.map((l, i) => `
-    <div class="cost-row">
-      <input class="lbl" data-f="extra.${i}.omschrijving" value="${esc(l.omschrijving)}" placeholder="Omschrijving">
-      <input inputmode="decimal" data-f="extra.${i}.aantal" data-t="num" value="${esc(numVal(l.aantal))}" aria-label="Aantal">
-      <input inputmode="decimal" data-f="extra.${i}.prijs" data-t="num" value="${esc(numVal(l.prijs))}" aria-label="Prijs">
-      <div class="amount"><span data-amount="extra.${i}">${fmtEur(parseNum(l.aantal) * parseNum(l.prijs))}</span>
-        <button type="button" class="btn icon ghost" data-action="del-line" data-list="extra" data-i="${i}" aria-label="Verwijderen">✕</button></div>
+    <div class="cost-row extra">
+      <div class="lbl"><input data-f="extra.${i}.omschrijving" value="${esc(l.omschrijving)}" placeholder="Omschrijving">${vrijePrijs(`extra.${i}.prijs`, l.prijs)}</div>
+      <label class="field"><span>Aantal</span><input inputmode="decimal" data-f="extra.${i}.aantal" data-t="num" value="${esc(numVal(l.aantal))}"></label>
+      <button type="button" class="btn icon ghost" data-action="del-line" data-list="extra" data-i="${i}" aria-label="Verwijderen">✕</button>
     </div>`).join('');
   return sec('kosten', 'Werkuren & kosten', '5', `
-    <div class="cost-row head" style="padding-top:0">
-      <span class="label lbl">&nbsp;</span><span class="label right">Aantal / uren</span><span class="label right">Tarief</span><span class="label right">Bedrag</span>
-    </div>
     <div class="cost-row">
       <div class="lbl"><b>Werkuren</b><br>${auto}${garantieCheck('werkurenGarantie', wb.werkurenGarantie)}</div>
-      <input inputmode="decimal" data-f="werkuren" data-t="num" value="${esc(numVal(wb.werkuren))}" aria-label="Werkuren">
-      <input inputmode="decimal" data-f="uurtarief" data-t="num" value="${esc(numVal(wb.uurtarief))}" aria-label="Uurtarief">
-      <div class="amount" data-amount="arbeid">${fmtEur(t.arbeid)}</div>
+      <label class="field"><span>Uren</span><input inputmode="decimal" data-f="werkuren" data-t="num" value="${esc(numVal(wb.werkuren))}"></label>
     </div>
     <div class="cost-row">
       <div class="lbl"><label class="check"><input type="checkbox" data-f="aanrijkost.actief" ${wb.aanrijkost.actief ? 'checked' : ''}> <b>Aanrijkost</b></label>
         ${garantieCheck('aanrijkost.garantie', wb.aanrijkost.garantie)}</div>
-      <span></span>
-      <input inputmode="decimal" data-f="aanrijkost.bedrag" data-t="num" value="${esc(numVal(wb.aanrijkost.bedrag))}" aria-label="Aanrijkost">
-      <div class="amount" data-amount="aanrijkost">${fmtEur(wb.aanrijkost.actief ? parseNum(wb.aanrijkost.bedrag) : 0)}</div>
     </div>
     <div class="cost-row">
       <label class="check lbl"><input type="checkbox" data-f="brandstoftoeslag.actief" ${wb.brandstoftoeslag.actief ? 'checked' : ''}> <b>Brandstoftoeslag</b></label>
-      <span></span>
-      <input inputmode="decimal" data-f="brandstoftoeslag.bedrag" data-t="num" value="${esc(numVal(wb.brandstoftoeslag.bedrag))}" aria-label="Brandstoftoeslag">
-      <div class="amount" data-amount="brandstof">${fmtEur(wb.brandstoftoeslag.actief ? parseNum(wb.brandstoftoeslag.bedrag) : 0)}</div>
     </div>
     ${extra}
-    <div class="row" style="margin:12px 0 16px"><button type="button" class="btn" data-action="add-extra">＋ Extra kost</button></div>
-    <div class="totals" data-totals>${totalsHtml(t)}</div>`);
-}
-
-function totalsHtml(t) {
-  const wb = App.wb;
-  return `
-    <span>Onderdelen</span><span class="right">${fmtEur(t.onderdelen)}</span>
-    <span>Werkuren</span><span class="right">${fmtEur(t.arbeid)}</span>
-    <span>Verplaatsing</span><span class="right">${fmtEur(t.verplaatsing)}</span>
-    ${t.overige ? `<span>Overige</span><span class="right">${fmtEur(t.overige)}</span>` : ''}
-    ${t.garantie ? `<span>Subtotaal</span><span class="right">${fmtEur(t.bruto)}</span>
-    <span class="garantie">100% korting</span><span class="garantie right">− ${fmtEur(t.garantie)}</span>` : ''}
-    <span><b>Totaal excl. BTW</b></span><span class="right"><b>${fmtEur(t.excl)}</b></span>
-    <span>BTW ${fmtNum(parseNum(wb.btw))}%</span><span class="right">${fmtEur(t.btw)}</span>
-    <span class="grand">Totaal incl. BTW</span><span class="grand right">${fmtEur(t.incl)}</span>`;
+    <div class="row" style="margin:12px 0 0"><button type="button" class="btn" data-action="add-extra">＋ Extra kost</button></div>`);
 }
 
 function secHandtekening() {
@@ -882,20 +853,8 @@ function refreshSection(id) {
   updateAmounts();
 }
 
-function updateAmounts() {
-  const wb = App.wb;
-  if (!wb) return;
-  const t = totals(wb);
-  const set = (key, val) => { const el = $(`[data-amount="${key}"]`); if (el) el.textContent = fmtEur(val); };
-  wb.onderdelen.forEach((l, i) => set(`onderdelen.${i}`, parseNum(l.aantal) * parseNum(l.prijs)));
-  wb.extra.forEach((l, i) => set(`extra.${i}`, parseNum(l.aantal) * parseNum(l.prijs)));
-  set('arbeid', t.arbeid);
-  set('aanrijkost', wb.aanrijkost.actief ? parseNum(wb.aanrijkost.bedrag) : 0);
-  set('brandstof', wb.brandstoftoeslag.actief ? parseNum(wb.brandstoftoeslag.bedrag) : 0);
-  set('bar', t.incl);
-  const tot = $('[data-totals]');
-  if (tot) tot.innerHTML = totalsHtml(t);
-}
+// The werkbon screen shows no amounts any more; kept as the hook for live updates after a change
+function updateAmounts() {}
 
 function bindWerkbon() {
   const root = view();
@@ -1058,7 +1017,7 @@ function pickPart() {
     items: App.onderdelen,
     keepOpen: true,
     haystack: p => `${p.artikelnr} ${p.omschrijving}`,
-    render: p => `<div class="main"><div class="title">${esc(p.omschrijving)}</div><div class="sub">${esc(p.artikelnr)}</div></div><div class="meta nowrap">${fmtEur(p.prijs)}</div>`,
+    render: p => `<div class="main"><div class="title">${esc(p.omschrijving)}</div><div class="sub">${esc(p.artikelnr)}</div></div>`,
     onPick: p => addLine({ artikelnr: p.artikelnr, omschrijving: p.omschrijving, aantal: 1, prijs: p.prijs }),
     freeText: { label: q => `"${q}" toevoegen als vrije regel`, onClick: q => addLine({ artikelnr: '', omschrijving: q, aantal: 1, prijs: 0 }) },
   });

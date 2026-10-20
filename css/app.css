@@ -185,6 +185,10 @@ input[type="checkbox"] { width: 22px; min-height: 22px; height: 22px; accent-col
 .cost-row:last-child { border-bottom: 0; }
 .cost-row .amount { text-align: right; font-weight: 600; white-space: nowrap; }
 
+.vrije-prijs { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: .8rem; color: var(--muted); }
+.vrije-prijs input { width: 110px; min-height: 36px; text-align: right; }
+.cost-row.extra { align-items: start; }
+
 .garantie-check { display: flex; min-height: 32px; gap: 8px; font-size: .85rem; color: var(--boss-forest); margin-top: 2px; }
 .garantie-check input { width: 18px; min-height: 18px; height: 18px; }
 .totals .garantie { color: var(--boss-forest); font-weight: 600; }
@@ -262,11 +266,13 @@ input[type="checkbox"] { width: 22px; min-height: 22px; height: 22px; accent-col
   .status-bar .hide-sm { display: none; }
   .status-bar .inner { flex-wrap: nowrap; }
   .lines thead { display: none; }
-  .lines tr { display: grid; grid-template-columns: 1fr 80px 100px 40px; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .lines tr { display: grid; grid-template-columns: 1fr 100px 44px; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .lines td.w-qty { grid-column: 2; }
   .lines td { border: 0; padding: 0; }
   .lines td.desc { grid-column: 1 / -1; }
   .lines .w-total { align-self: center; }
-  .cost-row { grid-template-columns: 1fr 90px 100px; }
+  .cost-row { grid-template-columns: 1fr 100px 44px; }
+  .cost-row .field { grid-column: 2; }
   .cost-row .amount { grid-column: 3; }
   .cost-row .lbl { grid-column: 1 / -1; }
   .cost-row.head .lbl { display: none; }
