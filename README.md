@@ -51,7 +51,7 @@ Op GitHub Pages staan geen klantgegevens: `seed.local.js` zit niet in de reposit
 
 ## Waar staan de gegevens?
 
-**Gedeeld via SharePoint** zodra `tenantId` en `clientId` in `js/config.js` ingevuld zijn (zie [SharePoint koppelen](#sharepoint-koppelen)). Tot dan wordt alles enkel op het toestel bewaard (in de browser) en gaan werkbonnen naar kantoor via de PDF en de CSV-export. Maak in dat geval regelmatig een back-up via **Instellingen › Back-up downloaden**: wis je de browsergegevens, dan zijn de werkbonnen op dat toestel weg.
+**Gedeeld via SharePoint** zodra het toestel de met OneDrive gesynchroniseerde map gekozen heeft, of zodra `tenantId` en `clientId` in `js/config.js` ingevuld zijn (zie [SharePoint koppelen](#sharepoint-koppelen)). Tot dan wordt alles enkel op het toestel bewaard (in de browser) en gaan werkbonnen naar kantoor via de PDF en de CSV-export. Maak in dat geval regelmatig een back-up via **Instellingen › Back-up downloaden**: wis je de browsergegevens, dan zijn de werkbonnen op dat toestel weg.
 
 **De centrale database (Supabase) staat uit** (`centraal: false`). Het deel hieronder tot "SharePoint koppelen" beschrijft ze, voor als je ze later weer aanzet met `centraal: true`.
 
@@ -85,7 +85,17 @@ Zolang er geen enkele beheerder aangeduid is, ziet iedereen de pagina Beheer. Du
 
 ## SharePoint koppelen
 
-Alle werkbonnen, foto's, klanten, machines, onderdelen en monteurs staan in de SharePoint-map **Diensten › Gedeelde documenten › General › MyMx › Werkbonnen Boss**. Elke monteur meldt zich in de app aan met zijn BOSS Microsoft 365-account; de app werkt met de rechten van die persoon op de map. Wie geen toegang heeft tot de map, krijgt niets te zien.
+Alle werkbonnen, foto's, klanten, machines, onderdelen en monteurs staan in de SharePoint-map **Diensten › Gedeelde documenten › General › MyMx › Werkbonnen Boss**. De app bereikt die map op een van twee manieren:
+
+1. **Gesynchroniseerde map (geen IT nodig, enkel op pc).** Zoals de shakerregistratie: OneDrive zet de map op de pc en de app schrijft er rechtstreeks in. Werkt in **Edge** of **Chrome** op een Windows-pc of -laptop.
+   1. Open de map in SharePoint en klik **Synchroniseren** (OneDrive moet aangemeld zijn met je BOSS-account).
+   2. In de app: **Instellingen › SharePoint › Map kiezen**, kies de map **Werkbonnen Boss** en klik **Wijzigingen toestaan**. Kies je per ongeluk de bovenliggende map, dan neemt de app zelf de map Werkbonnen Boss erin.
+   3. Na het herstarten van de browser vraagt de app soms opnieuw toegang (knop **Toegang geven**). Biedt de browser **Altijd toestaan** aan, kies dat dan.
+
+   Werkt ook zonder internet: OneDrive stuurt de bestanden door zodra er verbinding is. Collega's zien wijzigingen zodra OneDrive op beide pc's gesynchroniseerd heeft (meestal binnen een minuut). Bewaren twee pc's de lijsten tegelijk, dan maakt OneDrive een kopie `lijsten-<pc>.json`; de app voegt die vanzelf terug samen. Op een telefoon of iPad kan een browser geen map openen; daar is manier 2 nodig.
+2. **Aanmelden bij Microsoft (alle toestellen, eenmalig IT nodig).** De app spreekt SharePoint rechtstreeks aan via Microsoft Graph. Elke monteur meldt zich aan met zijn BOSS Microsoft 365-account; de app werkt met de rechten van die persoon op de map. Hiervoor is de app-registratie hieronder nodig.
+
+Heeft een toestel een gesynchroniseerde map gekozen, dan gebruikt het die. Wie geen toegang heeft tot de map, krijgt in beide gevallen niets te zien.
 
 Wat er in de map komt:
 
@@ -132,7 +142,9 @@ Start de app op twee poorten (bv. 8095 en 8096: twee "toestellen") en voer in de
 localStorage.setItem('werkbonnen.sp.test', JSON.stringify({ graph: 'http://localhost:8097/graph/v1.0', driveId: 'test', mapId: 'root', testToken: true }))
 ```
 
-Dit werkt enkel op `localhost` en slaat de Microsoft-aanmelding over. Om het aanmelden zelf te testen, gebruik je in plaats van `testToken: true` de nagebootste aanmelding van dezelfde server: `tenantId: 't', clientId: 'c', login: 'http://localhost:8097/login'`. Een `login_hint` die begint met `geen-sessie` speelt na dat er geen Microsoft-sessie is. Getest: gedeelde nummering, werkbonnen en foto's van het ene toestel op het andere, de bezoekmap met PDF's en foto's, heropenen, wissen, klanten die op beide toestellen tegelijk gewijzigd worden, en het vanzelf opnieuw aanmelden (gelukt, mislukt zonder te blijven proberen, en niet terwijl een werkbon open staat). De echte aanmelding bij Microsoft is pas te testen na de app-registratie.
+Dit werkt enkel op `localhost` en slaat de Microsoft-aanmelding over. Om het aanmelden zelf te testen, gebruik je in plaats van `testToken: true` de nagebootste aanmelding van dezelfde server: `tenantId: 't', clientId: 'c', login: 'http://localhost:8097/login'`. Een `login_hint` die begint met `geen-sessie` speelt na dat er geen Microsoft-sessie is.
+
+De gesynchroniseerde map test je met `{ opfs: true }` als `werkbonnen.sp.test`: dan neemt de eigen opslag van de browser de plaats in van de OneDrive-map (geen mapkiezer nodig). Getest: werkbon, foto's, lijsten en bezoekmap met PDF's in de map, een conflictkopie `lijsten-<pc>.json` die samengevoegd en opgeruimd wordt, een conflictkopie van een werkbon die genegeerd wordt, een wijziging van een collega die binnenkomt, en een verdwenen map (foutmelding, niets gewist). Het echte kiezen van een OneDrive-map en de toestemming van de browser zijn enkel met de hand te testen. Getest: gedeelde nummering, werkbonnen en foto's van het ene toestel op het andere, de bezoekmap met PDF's en foto's, heropenen, wissen, klanten die op beide toestellen tegelijk gewijzigd worden, en het vanzelf opnieuw aanmelden (gelukt, mislukt zonder te blijven proberen, en niet terwijl een werkbon open staat). De echte aanmelding bij Microsoft is pas te testen na de app-registratie.
 
 ## Centrale database opzetten (Lovable Cloud / Supabase)
 

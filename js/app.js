@@ -579,8 +579,7 @@ async function viewWerkbonnen() {
         <a class="btn primary" href="#/werkbon/nieuw">＋ Nieuwe werkbon</a>
       </div>
     </div>
-    ${SP.ingesteld() && !SP.aangemeld() ? `<div class="locked-note"><span>Meld je aan met je BOSS-account om de werkbonnen van iedereen te zien en de jouwe te delen via SharePoint.</span>
-      <button type="button" class="btn small primary" data-sp-in>Aanmelden</button></div>` : ''}
+    ${spBanner()}
     <div class="toolbar">
       <div class="search"><input type="search" placeholder="Zoek op klant, nummer, machine, monteur…" value="${esc(ui.wbQuery)}" data-q></div>
       <div class="seg" role="tablist">
@@ -611,7 +610,16 @@ async function viewWerkbonnen() {
     draw();
   }));
   $('[data-export]').addEventListener('click', () => exportWerkbonnenCsv(all));
-  $('[data-sp-in]')?.addEventListener('click', () => SP.aanmelden());
+  $('[data-sp-in]')?.addEventListener('click', async () => { if (await SP.aanmelden()) viewWerkbonnen(); });
+}
+
+// Shown above the werkbonnen as long as this device does not share via SharePoint
+function spBanner() {
+  const knop = (tekst, uitleg) => `<div class="locked-note"><span>${uitleg}</span><button type="button" class="btn small primary" data-sp-in>${tekst}</button></div>`;
+  if (SP.modus() === 'map' && !SP.aangemeld()) return knop('Toegang geven', 'Geef de app toegang tot de SharePoint-map om de werkbonnen van iedereen te zien en de jouwe te delen.');
+  if (SP.modus() === 'graph' && !SP.aangemeld()) return knop('Aanmelden', 'Meld je aan met je BOSS-account om de werkbonnen van iedereen te zien en de jouwe te delen via SharePoint.');
+  if (!SP.modus() && SP.mapMogelijk()) return knop('Map kiezen', 'Deel de werkbonnen via SharePoint: synchroniseer de map <b>Werkbonnen Boss</b> met OneDrive en kies ze hier (meer uitleg bij Instellingen).');
+  return '';
 }
 
 function exportWerkbonnenCsv(list) {
@@ -1585,7 +1593,7 @@ function drawTopbar() {
     $('#who').addEventListener('click', () => openAanmelden(() => route()));
     $('#sync-badge').addEventListener('click', () => {
       if (SP.ingesteld()) {
-        if (SP.state.status === 'aanmelden') return SP.aanmelden();
+        if (SP.state.status === 'aanmelden') return SP.aanmelden().then(ok => { if (ok && !App.wb) route(); });
         SP.syncNu();
       } else Sync.syncNow();
       location.hash = '#/instellingen';
@@ -1612,7 +1620,7 @@ function syncStatusText() {
   const tijd = lastSync ? fmtDateTime(lastSync).slice(-5) : '';
   switch (status) {
     case 'uit': return { cls: 'off', text: 'Geen centrale opslag ingesteld', short: '' };
-    case 'aanmelden': return { cls: 'warn', text: `${message || 'Meld je aan bij SharePoint'}${wacht ? ' · ' + wacht : ''}`, short: 'Aanmelden' };
+    case 'aanmelden': return { cls: 'warn', text: `${message || 'Meld je aan bij SharePoint'}${wacht ? ' · ' + wacht : ''}`, short: SP.modus() === 'map' ? 'Toegang geven' : 'Aanmelden' };
     case 'offline': return { cls: 'warn', text: [message || 'Offline', wacht].filter(Boolean).join(' · '), short: `Offline${pending ? ' · ' + pending : ''}` };
     case 'bezig': return { cls: 'busy', text: 'Synchroniseren…', short: '↻' };
     case 'fout': return { cls: 'err', text: `⚠ ${message}${wacht ? ' · ' + wacht : ''}`, short: `⚠${pending ? ' ' + pending : ''}` };
@@ -1756,6 +1764,28 @@ function openMonteurModal(monteur) {
 /* =========================================================================
    View: instellingen
    ========================================================================= */
+// The part of the SharePoint card that depends on how this device reaches the folder
+function spKaart() {
+  const stappen = `<ol class="small" style="margin:0 0 10px; padding-left:20px">
+      <li>Open de map <b>Werkbonnen Boss</b> in SharePoint (Diensten › Gedeelde documenten › General › MyMx) en klik <b>Synchroniseren</b>, zodat OneDrive ze op deze pc zet.</li>
+      <li>Klik hieronder <b>Map kiezen</b>, kies de gesynchroniseerde map <b>Werkbonnen Boss</b> en klik <b>Wijzigingen toestaan</b>.</li></ol>`;
+  if (SP.modus() === 'map') {
+    return `<div class="field"><span>Gesynchroniseerde map op deze pc</span>
+        <div class="row"><b>${esc(SP.mapNaam())}</b>${SP.aangemeld() ? '' : ' <span class="small muted">· toegang nodig</span>'}
+          ${SP.aangemeld() ? '' : '<button type="button" class="btn small primary" data-sp-in>Toegang geven</button>'}
+          <button type="button" class="btn small" data-sp-kies>Andere map</button>
+          <button type="button" class="btn small" data-sp-los>Ontkoppelen</button></div></div>
+      <p class="small muted" style="margin:8px 0 0">OneDrive zet de bestanden in SharePoint. Na het herstarten van de browser vraagt de app soms opnieuw toegang: kies dan <b>Altijd toestaan</b> als de browser dat aanbiedt.</p>`;
+  }
+  if (SP.modus() === 'graph') {
+    return `<div class="field"><span>Aangemeld bij Microsoft</span>
+        <div class="row"><b>${esc(SP.aangemeld() ? (SP.state.gebruiker || 'ja') : 'niet aangemeld')}</b>
+          ${SP.aangemeld() ? '<button type="button" class="btn small" data-sp-uit>Afmelden</button>' : '<button type="button" class="btn small primary" data-sp-in>Aanmelden</button>'}</div></div>
+      ${SP.mapMogelijk() ? '<p class="small muted" style="margin:8px 0 0">Of gebruik de met OneDrive gesynchroniseerde map: <button type="button" class="btn small" data-sp-kies>Map kiezen</button></p>' : ''}`;
+  }
+  return `${stappen}<button type="button" class="btn primary" data-sp-kies>Map kiezen</button>`;
+}
+
 async function viewInstellingen() {
   const s = App.settings;
   const inp = (path, label, attrs = '') => `<label class="field"><span>${label}</span><input data-s="${path}" value="${esc(getPath(s, path))}" ${attrs}></label>`;
@@ -1832,15 +1862,13 @@ async function viewInstellingen() {
         <button type="button" class="btn small primary" data-sync-now>Nu synchroniseren</button></div>
     </section>`}
 
-    ${SP.ingesteld() ? `<section class="card"><h2>SharePoint <span class="step">Werkbonnen Boss</span></h2>
+    ${SP.ingesteld() || SP.mapMogelijk() ? `<section class="card"><h2>SharePoint <span class="step">Werkbonnen Boss</span></h2>
       <p class="small muted" style="margin-top:0">Werkbonnen, foto's, klanten, machines en onderdelen worden gedeeld via SharePoint, zodat iedereen dezelfde gegevens ziet.
         Een afgeronde werkbon komt met de werkbon-PDF, de pro forma en de foto's in <b>Klanten › klantnaam › datum en uur van het bezoek</b>.</p>
-      <div class="field"><span>Aangemeld bij Microsoft</span>
-        <div class="row"><b>${esc(SP.aangemeld() ? (SP.state.gebruiker || 'ja') : 'niet aangemeld')}</b>
-          ${SP.aangemeld() ? '<button type="button" class="btn small" data-sp-uit>Afmelden</button>' : '<button type="button" class="btn small primary" data-sp-in>Aanmelden</button>'}</div></div>
-      <div class="row" style="margin-top:8px"><span data-sync-status class="small"></span><span class="spacer"></span>
-        ${SP.mapLink() ? `<a class="btn small" href="${esc(SP.mapLink())}" target="_blank" rel="noopener">Map openen</a>` : ''}
-        <button type="button" class="btn small primary" data-sp-nu>Nu synchroniseren</button></div>
+      ${spKaart()}
+      ${SP.ingesteld() ? `<div class="row" style="margin-top:8px"><span data-sync-status class="small"></span><span class="spacer"></span>
+        ${SP.mapLink() ? `<a class="btn small" href="${esc(SP.mapLink())}" target="_blank" rel="noopener">Map in SharePoint</a>` : ''}
+        <button type="button" class="btn small primary" data-sp-nu>Nu synchroniseren</button></div>` : ''}
     </section>` : ''}
 
     <section class="card"><h2>Gegevens</h2>
@@ -1874,10 +1902,16 @@ async function viewInstellingen() {
   root.addEventListener('change', e => { if (e.target.dataset.s?.startsWith('centraal.')) Sync.schedule(500); });
 
   $('[data-wissel]').addEventListener('click', () => openAanmelden(() => viewInstellingen()));
-  $('[data-sp-in]')?.addEventListener('click', () => SP.aanmelden());
+  $('[data-sp-in]')?.addEventListener('click', async () => { await SP.aanmelden(); viewInstellingen(); });
   $('[data-sp-uit]')?.addEventListener('click', () => {
     if (!confirm('Afmelden bij Microsoft? De gegevens blijven op dit toestel, maar worden niet meer gedeeld tot je opnieuw aanmeldt.')) return;
     SP.afmelden();
+    viewInstellingen();
+  });
+  $('[data-sp-kies]')?.addEventListener('click', async () => { if (await SP.kiesMap()) toast('Map gekoppeld ✓'); viewInstellingen(); });
+  $('[data-sp-los]')?.addEventListener('click', async () => {
+    if (!confirm('De map ontkoppelen? De gegevens blijven op dit toestel en in SharePoint, maar dit toestel deelt niets meer tot je opnieuw een map kiest.')) return;
+    await SP.ontkoppelMap();
     viewInstellingen();
   });
   $('[data-sp-nu]')?.addEventListener('click', () => SP.syncNu());

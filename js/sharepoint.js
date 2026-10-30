@@ -1,5 +1,10 @@
-// Sync with a SharePoint folder through Microsoft Graph, so every technician sees the same
-// werkbonnen, number sequence, customers, parts and photos.
+// Sync with a SharePoint folder, so every technician sees the same werkbonnen, number sequence,
+// customers, parts and photos. Two ways to reach the folder:
+//   - "map": the copy of the folder that OneDrive syncs to this PC, chosen once with "Map kiezen"
+//     (File System Access API, Edge/Chrome on a PC). The app writes files there and OneDrive
+//     uploads them. No app registration needed. Chosen on the device, so it takes precedence.
+//   - "graph": straight to SharePoint through Microsoft Graph with a Microsoft sign-in
+//     (needs the app registration in js/config.js). Also works on phones and tablets.
 //
 // Layout in the folder (js/config.js: sharepoint.driveId / mapId):
 //   App-gegevens/werkbonnen/<id>.json   one file per werkbon (also concepts), with photo captions
@@ -47,7 +52,143 @@ const SP = (() => {
     c.graph = (c.graph || 'https://graph.microsoft.com/v1.0').replace(/\/+$/, '');
     return c;
   }
-  const ingesteld = () => { const c = cfg(); return !!(c.driveId && c.mapId && (c.testToken || (c.tenantId && c.clientId))); };
+  const graphIngesteld = () => { const c = cfg(); return !!(c.driveId && c.mapId && (c.testToken || (c.tenantId && c.clientId))); };
+
+  /* ---------- Synced folder (OneDrive) ---------- */
+  const MAP_NAAM = 'Werkbonnen Boss';
+  let mapHandle = null;      // FileSystemDirectoryHandle of the synced folder, kept in IndexedDB
+  let mapToegang = false;    // the browser allows reading and writing it (asked again after a restart)
+  const mapMogelijk = () => 'showDirectoryPicker' in window;
+
+  const modus = () => (mapHandle ? 'map' : graphIngesteld() ? 'graph' : null);
+  const ingesteld = () => modus() !== null;
+  const bereikbaar = () => modus() === 'map' || navigator.onLine;   // the folder is on this PC: also offline
+
+  async function laadMap() {
+    // Local tests only: the browser's private storage stands in for the synced folder
+    if (cfg().opfs) mapHandle = await (await navigator.storage.getDirectory()).getDirectoryHandle(MAP_NAAM, { create: true });
+    else mapHandle = (await DB.get('settings', 'spmap'))?.handle || null;
+    mapToegang = !!mapHandle && (await mapHandle.queryPermission({ mode: 'readwrite' })) === 'granted';
+  }
+
+  // Lets the technician pick the synced "Werkbonnen Boss" folder (needs a click)
+  async function kiesMap() {
+    let h;
+    try {
+      h = await window.showDirectoryPicker({ id: 'werkbonnen-sharepoint', mode: 'readwrite', startIn: 'documents' });
+    } catch { return false; }   // cancelled
+    if (h.name !== MAP_NAAM) {
+      // The parent folder picked by mistake? Then use the folder inside it
+      const binnen = await h.getDirectoryHandle(MAP_NAAM).catch(() => null);
+      if (binnen) h = binnen;
+      else if (!confirm(`De gekozen map heet "${h.name}", niet "${MAP_NAAM}". Toch deze map gebruiken?`)) return false;
+    }
+    if ((await h.requestPermission({ mode: 'readwrite' })) !== 'granted') return false;
+    const anders = !mapHandle || !(await mapHandle.isSameEntry(h));
+    await DB.put('settings', { id: 'spmap', handle: h });
+    mapHandle = h;
+    mapToegang = true;
+    if (anders) await nieuweBestemming();
+    syncNu();
+    return true;
+  }
+
+  async function ontkoppelMap() {
+    await DB.del('settings', 'spmap');
+    mapHandle = null;
+    mapToegang = false;
+    await nieuweBestemming();
+    syncNu();
+  }
+
+  // Other folder (or other way to SharePoint): send everything there again, and never delete
+  // local werkbonnen because they are not in the new folder yet
+  async function nieuweBestemming() {
+    for (const w of await DB.getAll('werkbonnen')) {
+      if (w.spVersie || w.spMap) { delete w.spVersie; delete w.spMap; await DB.put('werkbonnen', w); }
+    }
+    for (const f of await DB.getAll('fotos')) if (f.sp) { f.sp = false; await DB.put('fotos', f); }
+    const m = await spMeta();
+    m.lijstenETag = null;
+    await bewaarSpMeta(m);
+  }
+
+  const mapFout = e => {
+    if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') { mapToegang = false; return new AuthNodig('Geef de app toegang tot de SharePoint-map'); }
+    return e;
+  };
+  const nietGevonden = e => e?.name === 'NotFoundError' || e?.name === 'TypeMismatchError';
+
+  // The folder itself must still exist: otherwise every subfolder would look empty
+  async function controleerMap() {
+    try { for await (const _ of mapHandle.keys()) break; }
+    catch (e) {
+      if (nietGevonden(e)) throw new HttpFout(404, `Map "${mapHandle.name}" niet gevonden: kies ze opnieuw bij Instellingen`);
+      throw mapFout(e);
+    }
+  }
+
+  // Walks to a subfolder; null when it does not exist (and maak is false)
+  async function mapNaar(delen, maak) {
+    let d = mapHandle;
+    for (const deel of delen) {
+      try { d = await d.getDirectoryHandle(deel, { create: maak }); }
+      catch (e) { if (nietGevonden(e) && !maak) return null; throw mapFout(e); }
+    }
+    return d;
+  }
+  const splits = pad => { const delen = pad.split('/'); return { mappen: delen.slice(0, -1), naam: delen.at(-1) }; };
+  const bestandMeta = (naam, f) => ({ name: naam, eTag: `${f.lastModified}-${f.size}`, lastModifiedDateTime: new Date(f.lastModified).toISOString(), size: f.size });
+
+  async function mapBestand(pad) {
+    const { mappen, naam } = splits(pad);
+    const d = await mapNaar(mappen, false);
+    if (!d) return null;
+    try { return await (await d.getFileHandle(naam)).getFile(); }
+    catch (e) { if (nietGevonden(e)) return null; throw mapFout(e); }
+  }
+
+  const mapMeta = async pad => { const f = await mapBestand(pad); return f && bestandMeta(f.name, f); };
+
+  async function mapLijst(pad) {
+    const d = await mapNaar(pad.split('/'), false);
+    if (!d) return [];
+    const out = [];
+    try {
+      for await (const [naam, h] of d.entries()) {
+        out.push(h.kind === 'file' ? bestandMeta(naam, await h.getFile()) : { name: naam, folder: {} });
+      }
+    } catch (e) { throw mapFout(e); }
+    return out;
+  }
+
+  async function mapDownload(pad) {
+    const f = await mapBestand(pad);
+    if (!f) return null;
+    // A copy in memory: a File from disk becomes unreadable once OneDrive changes the file
+    const data = await f.arrayBuffer();
+    return { json: async () => JSON.parse(new TextDecoder().decode(data)), blob: async () => new Blob([data], { type: f.type || 'application/octet-stream' }) };
+  }
+
+  async function mapUpload(pad, inhoud, type, ifMatch) {
+    // Best effort instead of If-Match: check right before writing that nobody else wrote in between
+    if (ifMatch !== undefined && ((await mapMeta(pad))?.eTag || undefined) !== ifMatch) throw new HttpFout(412, 'Intussen gewijzigd');
+    const { mappen, naam } = splits(pad);
+    try {
+      const w = await (await (await mapNaar(mappen, true)).getFileHandle(naam, { create: true })).createWritable();
+      await w.write(inhoud instanceof Blob ? inhoud : new Blob([inhoud], { type }));
+      await w.close();
+    } catch (e) { throw mapFout(e); }
+    return mapMeta(pad);
+  }
+
+  async function mapVerwijder(pad) {
+    const { mappen, naam } = splits(pad);
+    const d = await mapNaar(mappen, false);
+    if (!d) return;
+    try { await d.removeEntry(naam, { recursive: true }); }
+    catch (e) { if (!nietGevonden(e)) throw mapFout(e); }
+  }
 
   /* ---------- Sign-in (PKCE) ---------- */
   const b64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -56,10 +197,22 @@ const SP = (() => {
   const authBase = () => cfg().login || `https://login.microsoftonline.com/${cfg().tenantId}/oauth2/v2.0`;   // login: local tests only
   const leesAuth = () => { try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; } };
   const bewaarAuth = a => { if (a) localStorage.setItem(AUTH_KEY, JSON.stringify(a)); else localStorage.removeItem(AUTH_KEY); };
-  const aangemeld = () => !!cfg().testToken || !!leesAuth()?.refresh;
+  // Synced folder: the browser allows access. Graph: signed in at Microsoft.
+  const aangemeld = () => (modus() === 'map' ? mapToegang : !!cfg().testToken || !!leesAuth()?.refresh);
+
+  // The "Aanmelden" button: access to the folder again, a folder to choose, or a Microsoft sign-in
+  async function aanmelden() {
+    if (modus() === 'map') {
+      mapToegang = (await mapHandle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied')) === 'granted';
+      if (mapToegang) syncNu();
+      return mapToegang;
+    }
+    if (!graphIngesteld()) return mapMogelijk() && kiesMap();
+    return microsoftAanmelden();
+  }
 
   // stil: no screen at Microsoft (prompt=none); comes straight back, signed in or with an error
-  async function aanmelden(stil = false) {
+  async function microsoftAanmelden(stil = false) {
     const verifier = random(48);
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
     const st = random(16);
@@ -76,7 +229,7 @@ const SP = (() => {
 
   // Automatic sign-in: only with a known account, online, and when nobody is busy in a werkbon or dialog
   function magStilAanmelden() {
-    if (cfg().testToken || !ingesteld() || !navigator.onLine || !localStorage.getItem(HINT_KEY)) return false;
+    if (modus() !== 'graph' || cfg().testToken || !navigator.onLine || !localStorage.getItem(HINT_KEY)) return false;
     const a = leesAuth();
     if (a?.refresh && Date.now() - (a.sinds || 0) < VERNIEUW_NA) return false;   // still valid long enough
     if (Date.now() - Number(sessionStorage.getItem(STIL_KEY) || 0) < STIL_PAUZE) return false;
@@ -85,7 +238,7 @@ const SP = (() => {
   }
   function stilAanmelden() {
     sessionStorage.setItem(STIL_KEY, String(Date.now()));
-    aanmelden(true);
+    microsoftAanmelden(true);
   }
 
   async function tokenAanvraag(params) {
@@ -180,9 +333,11 @@ const SP = (() => {
     if (!res.ok) throw new HttpFout(res.status, await foutTekst(res));
     return res.status === 204 ? null : res.json();
   }
-  const meta = pad => gJson(`${itemUrl(pad)}?$select=id,name,eTag,lastModifiedDateTime,size,webUrl`);
+  // meta / lijst / download / upload / verwijder: through Graph, or in the synced folder
+  const meta = pad => (modus() === 'map' ? mapMeta(pad) : gJson(`${itemUrl(pad)}?$select=id,name,eTag,lastModifiedDateTime,size,webUrl`));
 
   async function lijst(pad) {
+    if (modus() === 'map') return mapLijst(pad);
     const out = [];
     let url = `${itemUrl(pad)}/children?$select=id,name,eTag,lastModifiedDateTime,size&$top=999`;
     while (url) {
@@ -195,6 +350,7 @@ const SP = (() => {
   }
 
   async function download(pad) {
+    if (modus() === 'map') return mapDownload(pad);
     const res = await g(`${itemUrl(pad)}/content`);
     if (res.status === 404) return null;
     if (!res.ok) throw new HttpFout(res.status, await foutTekst(res));
@@ -202,7 +358,8 @@ const SP = (() => {
   }
 
   async function upload(pad, inhoud, type, ifMatch) {
-    const blob = inhoud instanceof Blob ? inhoud : new Blob([inhoud], { type });
+    if (modus() === 'map') return mapUpload(pad, inhoud, type, ifMatch);
+    const blob =inhoud instanceof Blob ? inhoud : new Blob([inhoud], { type });
     if (blob.size <= MAX_SIMPLE) {
       const headers = { 'Content-Type': type || blob.type || 'application/octet-stream' };
       if (ifMatch) headers['If-Match'] = ifMatch;
@@ -225,6 +382,7 @@ const SP = (() => {
   }
 
   async function verwijder(pad) {
+    if (modus() === 'map') return mapVerwijder(pad);
     const res = await g(itemUrl(pad), { method: 'DELETE' });
     if (!res.ok && res.status !== 404) throw new HttpFout(res.status, await foutTekst(res));
   }
@@ -321,14 +479,21 @@ const SP = (() => {
     return gewijzigd;
   }
 
+  // Synced folder: when two PCs saved the lists at the same time, OneDrive keeps both and names
+  // one "lijsten-<PC>.json". Those copies are merged back in and then removed.
+  const lijstKopieen = async () => (modus() === 'map' ? (await lijst(APP)).filter(r => /^lijsten.+\.json$/i.test(r.name)) : []);
+
   async function stuurLijsten() {
     const pad = `${APP}/lijsten.json`;
     for (let poging = 0; poging < 4; poging++) {
       const m = await meta(pad);
-      const remote = m ? await (await download(pad)).json() : {};
+      let remote = m ? await (await download(pad)).json() : {};
+      const kopieen = await lijstKopieen();
+      for (const k of kopieen) remote = voegSamen(remote, await (await download(`${APP}/${k.name}`))?.json() || {});
       const samen = voegSamen(remote, await lokaleLijsten());
       try {
         const r = await upload(pad, JSON.stringify(samen), 'application/json', m?.eTag);
+        for (const k of kopieen) await verwijder(`${APP}/${k.name}`);
         await pasLijstenToe(samen);
         const sm = await spMeta();
         sm.lijstenETag = r.eTag;
@@ -345,6 +510,7 @@ const SP = (() => {
   async function haalLijsten(wachtrij) {
     if (wachtrij.has('lijsten')) return false;
     const pad = `${APP}/lijsten.json`;
+    if ((await lijstKopieen()).length) { await stuurLijsten(); return true; }
     const m = await meta(pad);
     if (!m) {
       // Nothing in SharePoint yet: this device fills it with its lists
@@ -400,7 +566,7 @@ const SP = (() => {
 
   // Downloads the images of this werkbon that are only known by their caption on this device
   async function zorgVoorFotos(werkbonId) {
-    if (!ingesteld() || !aangemeld() || !navigator.onLine) return false;
+    if (!ingesteld() || !aangemeld() || !bereikbaar()) return false;
     let nieuw = false;
     for (const f of await werkbonFotos(werkbonId)) {
       if (f.blob) continue;
@@ -461,7 +627,8 @@ const SP = (() => {
     const ids = new Set();
     let gewijzigd = false;
     for (const r of remote) {
-      if (!r.name.endsWith('.json')) continue;
+      // Only "<id>.json": not a OneDrive conflict copy like "<id>-PC.json"
+      if (!/^[a-z0-9]+\.json$/.test(r.name)) continue;
       const id = r.name.slice(0, -5);
       ids.add(id);
       if (wachtrij.has(`werkbon:${id}`) || id === open) continue;   // own unsent change, or open in the editor
@@ -483,7 +650,9 @@ const SP = (() => {
       }
       gewijzigd = true;
     }
-    // Werkbonnen that were deleted on another device
+    // Werkbonnen that were deleted on another device. An empty folder while this device has
+    // werkbonnen from it is more likely a folder that is not (yet) synced: then delete nothing.
+    if (!ids.size) return gewijzigd;
     for (const w of await DB.getAll('werkbonnen')) {
       if (w.spVersie && !ids.has(w.id) && !wachtrij.has(`werkbon:${w.id}`) && w.id !== open) {
         for (const f of await werkbonFotos(w.id)) await DB.del('fotos', f.id);
@@ -526,10 +695,11 @@ const SP = (() => {
     await telWachtrij();
     if (!ingesteld()) return setStatus('uit');
     if (magStilAanmelden()) { setStatus('aanmelden', 'Opnieuw aanmelden…'); return stilAanmelden(); }
-    if (!aangemeld()) return setStatus('aanmelden', 'Meld je aan met je BOSS-account');
-    if (!navigator.onLine) return setStatus('offline', 'Geen internet');
+    if (!aangemeld()) return setStatus('aanmelden', modus() === 'map' ? 'Geef de app toegang tot de SharePoint-map' : 'Meld je aan met je BOSS-account');
+    if (!bereikbaar()) return setStatus('offline', 'Geen internet');
     setStatus('bezig');
     try {
+      if (modus() === 'map') await controleerMap();
       await nogNietVerzonden(new Set((await DB.getAll('spwachtrij')).map(i => i.id)));
       await verwerkWachtrij();
       const wachtrij = new Set((await DB.getAll('spwachtrij')).map(i => i.id));
@@ -545,6 +715,7 @@ const SP = (() => {
       if (e instanceof AuthNodig && magStilAanmelden()) { setStatus('aanmelden', 'Opnieuw aanmelden…'); stilAanmelden(); }
       else if (e instanceof AuthNodig) setStatus('aanmelden', e.message);
       else if (e instanceof HttpFout) setStatus('fout', e.status === 403 ? 'Geen toegang tot de SharePoint-map' : e.message);
+      else if (modus() === 'map') setStatus('fout', `Map: ${e.message || e.name}`);
       else setStatus('offline', 'SharePoint niet bereikbaar');
     }
   }
@@ -562,7 +733,7 @@ const SP = (() => {
 
   // Before handing out a new werkbon number: fetch the newest numbers first (max. 5 s)
   async function syncVoorNieuw() {
-    if (!ingesteld() || !aangemeld() || !navigator.onLine) return;
+    if (!ingesteld() || !aangemeld() || !bereikbaar()) return;
     await Promise.race([syncNu(), new Promise(r => setTimeout(r, 5000))]);
   }
 
@@ -570,10 +741,11 @@ const SP = (() => {
   let gestart = false;
   async function start() {
     await verwerkAanmelding();
+    if (mapMogelijk() || cfg().opfs) await laadMap().catch(e => console.warn('Map laden mislukt', e));
     if (!gestart) {
       gestart = true;
       window.addEventListener('online', () => syncNu());
-      window.addEventListener('offline', () => setStatus(ingesteld() ? 'offline' : 'uit', 'Geen internet'));
+      window.addEventListener('offline', () => { if (modus() !== 'map') setStatus(ingesteld() ? 'offline' : 'uit', 'Geen internet'); });
       document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNu(); });
       setInterval(() => { if (!document.hidden) syncNu(); }, 60000);
     }
@@ -583,6 +755,8 @@ const SP = (() => {
   return {
     state, start, syncNu, syncVoorNieuw, schedule, ingesteld, aangemeld, aanmelden, afmelden,
     stempel, lokaal, foto, publiceer, zorgVoorFotos,
+    modus, mapMogelijk, kiesMap, ontkoppelMap, graphIngesteld,
+    mapNaam: () => mapHandle?.name || '',
     mapLink: () => cfg().link || '',
     on: fn => listeners.add(fn),
   };
