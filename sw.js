@@ -1,5 +1,5 @@
 // Offline support: network first (so updates arrive immediately), cached copy when offline.
-const CACHE = 'werkbonnen-v10';
+const CACHE = 'werkbonnen-v11';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'icons/icon.svg',
   'css/app.css', 'js/config.js', 'js/db.js', 'js/sharepoint.js', 'js/sync.js','js/signature.js', 'js/print.js', 'js/pdf.js', 'js/app.js', 'data/seed.js',
@@ -27,7 +27,8 @@ self.addEventListener('fetch', e => {
   // Never cache the central database API (also when it is served from this origin for testing)
   if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.includes('/rest/v1/')) return;
   e.respondWith(
-    fetch(req)
+    // no-cache: always ask the server, otherwise GitHub Pages' 10-minute browser cache delays updates
+    fetch(req, { cache: 'no-cache' })
       .then(res => {
         // Not with a query: the return from the Microsoft sign-in carries a one-time code (?code=...)
         if (res.ok && !url.search) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }

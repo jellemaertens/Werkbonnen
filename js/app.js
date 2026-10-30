@@ -828,11 +828,14 @@ async function voegFotosToe(files) {
   await tekenFotos();
 }
 
-// Phones and tablets open their own camera app through <input capture>. Browsers on a PC or laptop
-// ignore capture and would only show a file picker, so there the webcam is used in a window of its own.
+// Android and iPhone/iPad open their own camera app through <input capture>. Windows (also a touch
+// laptop or Windows tablet), macOS and Linux ignore capture and only show a file picker, so there the
+// camera is used in a window of its own.
+const heeftCameraApp = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPadOS presents itself as a Mac
 function fotoNemen() {
   const input = $('[data-foto-input="camera"]');
-  if ('capture' in input || matchMedia('(pointer: coarse)').matches || !navigator.mediaDevices?.getUserMedia) return input.click();
+  if (heeftCameraApp() || !navigator.mediaDevices?.getUserMedia) return input.click();
   openCamera();
 }
 
