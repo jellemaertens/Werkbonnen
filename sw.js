@@ -1,8 +1,8 @@
 // Offline support: network first (so updates arrive immediately), cached copy when offline.
-const CACHE = 'werkbonnen-v7';
+const CACHE = 'werkbonnen-v8';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'icons/icon.svg',
-  'css/app.css', 'js/config.js', 'js/db.js', 'js/sync.js', 'js/signature.js', 'js/print.js', 'js/pdf.js', 'js/app.js', 'data/seed.js',
+  'css/app.css', 'js/config.js', 'js/db.js', 'js/sharepoint.js', 'js/sync.js','js/signature.js', 'js/print.js', 'js/pdf.js', 'js/app.js', 'data/seed.js',
   'assets/vendor/html2canvas.min.js', 'assets/vendor/jspdf.umd.min.js',
   'assets/BP-Baseline-RGB-POS-NL.png', 'assets/logo_BOSS_wit.png', 'assets/logo_BOSS_NL_baseline_wit.png',
   'assets/fonts/MonaSans-Regular.otf', 'assets/fonts/MonaSans-Bold.otf',
@@ -29,7 +29,8 @@ self.addEventListener('fetch', e => {
   e.respondWith(
     fetch(req)
       .then(res => {
-        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
+        // Not with a query: the return from the Microsoft sign-in carries a one-time code (?code=...)
+        if (res.ok && !url.search) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
         return res;
       })
       .catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || caches.match('index.html')))

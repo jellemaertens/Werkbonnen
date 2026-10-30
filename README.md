@@ -51,9 +51,9 @@ Op GitHub Pages staan geen klantgegevens: `seed.local.js` zit niet in de reposit
 
 ## Waar staan de gegevens?
 
-**De centrale database staat uit** (`centraal: false` in `js/config.js`). Alles wordt enkel op het toestel bewaard (in de browser). Werkbonnen gaan naar kantoor via de PDF en de CSV-export. Maak regelmatig een back-up via **Instellingen › Back-up downloaden**: wis je de browsergegevens, dan zijn de werkbonnen op dat toestel weg.
+**Gedeeld via SharePoint** zodra `tenantId` en `clientId` in `js/config.js` ingevuld zijn (zie [SharePoint koppelen](#sharepoint-koppelen)). Tot dan wordt alles enkel op het toestel bewaard (in de browser) en gaan werkbonnen naar kantoor via de PDF en de CSV-export. Maak in dat geval regelmatig een back-up via **Instellingen › Back-up downloaden**: wis je de browsergegevens, dan zijn de werkbonnen op dat toestel weg.
 
-De rest van dit hoofdstuk beschrijft de centrale database (Supabase), voor als je ze later weer aanzet met `centraal: true`.
+**De centrale database (Supabase) staat uit** (`centraal: false`). Het deel hieronder tot "SharePoint koppelen" beschrijft ze, voor als je ze later weer aanzet met `centraal: true`.
 
 De app werkt **offline eerst**: alles wordt op het toestel bewaard (in de browser), zodat de monteur ook zonder netwerk verder kan. Is er een centrale database ingesteld, dan:
 
@@ -82,6 +82,57 @@ Zolang er geen enkele beheerder aangeduid is, ziet iedereen de pagina Beheer. Du
 - De monteur kiest zijn naam uit een lijst, zonder wachtwoord. Dat is **geen echte identificatie**: een monteur kan een andere naam kiezen. Wil je dat wel afdwingen, dan is de volgende stap aanmelden met het Microsoft 365-account (Supabase Auth met Azure/Entra ID).
 - De publieke sleutel in `js/config.js` is zichtbaar voor iedereen die de app opent. De **teamcode** beschermt de gegevens: zonder juiste teamcode geeft de database niets terug en aanvaardt ze niets (row-level security). Hou de teamcode dus binnen het team en verander ze als een toestel verloren gaat.
 - De pagina Beheer verbergen voor niet-beheerders is gemak, geen beveiliging: wie de teamcode heeft, kan alle gegevens lezen.
+
+## SharePoint koppelen
+
+Alle werkbonnen, foto's, klanten, machines, onderdelen en monteurs staan in de SharePoint-map **Diensten › Gedeelde documenten › General › MyMx › Werkbonnen Boss**. Elke monteur meldt zich in de app aan met zijn BOSS Microsoft 365-account; de app werkt met de rechten van die persoon op de map. Wie geen toegang heeft tot de map, krijgt niets te zien.
+
+Wat er in de map komt:
+
+| Map | Inhoud |
+|---|---|
+| `Klanten/<klantnaam>/<datum en uur van het bezoek>/` | Per bezoek een map, genoemd naar het moment waarop de werkbon gemaakt is (bv. `2026-10-30 14.05.32`). Zodra de werkbon afgerond is: `Werkbon <nummer>.pdf`, `Pro forma <nummer>.pdf` en de foto's (`Foto 01 - bijschrift.jpg`). Heropent iemand de werkbon, dan verdwijnt de map tot hij opnieuw afgerond is. |
+| `App-gegevens/werkbonnen/` | Elke werkbon als JSON (ook concepten), voor de app. |
+| `App-gegevens/fotos/` | De foto's van alle werkbonnen, voor de app. |
+| `App-gegevens/lijsten.json` | Klanten, machines, onderdelen (met prijzen) en monteurs. |
+
+Pas de bestanden in `App-gegevens` niet met de hand aan. Het eerste toestel dat aanmeldt, vult `lijsten.json` met zijn lijsten.
+
+Hoe het synchroniseert:
+
+- Alles wordt eerst op het toestel bewaard, zodat de monteur offline verder kan. Wat nog niet verstuurd is, staat in een wachtrij. Rechtsboven zie je de status: `✓ 14:05`, `↑ 2` (te versturen), `Offline`, `Aanmelden` of `⚠`.
+- Met netwerk synchroniseert de app bij het openen, elke minuut, en kort na elke wijziging. Werkbonnen en lijstwijzigingen van collega's verschijnen dus binnen een minuut.
+- Vóór een nieuw werkbonnummer haalt de app eerst de nieuwste nummers op (max. 5 seconden), zodat alle monteurs één doorlopende reeks delen. Wie offline een werkbon begint, kan toch een nummer krijgen dat een collega al gebruikt.
+- Klanten, machines en onderdelen worden per record samengevoegd: wijzigen twee mensen tegelijk iets anders, dan blijven beide wijzigingen bewaard. Wijzigen ze hetzelfde record, dan wint de laatste wijziging.
+- Foto's van een collega worden pas gedownload wanneer je de werkbon opent of de PDF maakt.
+
+### Eenmalig door IT: app-registratie in Microsoft Entra ID
+
+1. **Entra-beheercentrum › App-registraties › Nieuwe registratie.** Naam bv. `Werkbonnen-app`, enkel accounts in deze organisatie.
+2. **Verificatie › Platform toevoegen › App met één pagina (SPA)** met deze omleidings-URI's:
+   - `https://jellemaertens.github.io/Werkbonnen/`
+   - `http://localhost:8080/` (om te testen op de pc)
+3. **API-machtigingen › Microsoft Graph › Gedelegeerde machtigingen:** `User.Read`, `Files.ReadWrite.All` (en standaard `openid`, `profile`, `offline_access`). Laat een beheerder **toestemming verlenen voor BOSS** als gebruikers dat zelf niet mogen. Gedelegeerd betekent: de app kan enkel wat de aangemelde persoon zelf mag.
+4. Geef de **Map-id (tenant)** en **Toepassings-id (client)** van het overzicht door. Die komen in `js/config.js` bij `tenantId` en `clientId`. Het zijn geen geheimen; er is geen clientgeheim nodig.
+5. Zorg dat elke monteur **bewerkrechten** heeft op de map Werkbonnen Boss.
+
+Voor een app met één pagina blijft een aanmelding volgens Microsoft maximaal 24 uur geldig. Daarna vraagt de app opnieuw om aan te melden (één klik, meestal zonder wachtwoord). Wat intussen gemaakt is, blijft in de wachtrij tot dan.
+
+### Lokaal testen met een nagebootste SharePoint
+
+`serve.ps1 -Graph` doet het deel van Microsoft Graph na dat de app gebruikt, met de bestanden in de map `werkbon-sharepoint-test` naast `werkbon-app` (staat in `.gitignore`).
+
+```bash
+powershell -ExecutionPolicy Bypass -File serve.ps1 -Port 8097 -Graph
+```
+
+Start de app op twee poorten (bv. 8095 en 8096: twee "toestellen") en voer in de browserconsole van elk uit:
+
+```js
+localStorage.setItem('werkbonnen.sp.test', JSON.stringify({ graph: 'http://localhost:8097/graph/v1.0', driveId: 'test', mapId: 'root', testToken: true }))
+```
+
+Dit werkt enkel op `localhost` en slaat de Microsoft-aanmelding over. Getest: gedeelde nummering, werkbonnen en foto's van het ene toestel op het andere, de bezoekmap met PDF's en foto's, heropenen, wissen, en klanten die op beide toestellen tegelijk gewijzigd worden. De echte aanmelding bij Microsoft is pas te testen na de app-registratie.
 
 ## Centrale database opzetten (Lovable Cloud / Supabase)
 
@@ -147,10 +198,11 @@ Open http://localhost:8090 en http://localhost:8091: dat zijn twee "toestellen" 
 | `js/app.js` | Schermen en logica (werkbonnen, klanten, onderdelen, instellingen) |
 | `js/print.js` | Opmaak van de afgedrukte werkbon / PDF |
 | `js/signature.js` | Handtekeningveld |
-| `js/db.js` | Opslag op het toestel (IndexedDB), inclusief de wachtrij (`outbox`) |
-| `js/sync.js` | Synchronisatie met de centrale database: wachtrij verzenden, lijsten ophalen |
-| `js/config.js` | Centrale database aan/uit (`centraal`), adres en publieke sleutel |
+| `js/db.js` | Opslag op het toestel (IndexedDB), inclusief de wachtrijen (`outbox`, `spwachtrij`) en foto's |
+| `js/sharepoint.js` | Aanmelden bij Microsoft en synchronisatie met de SharePoint-map |
+| `js/sync.js` | Elke wijziging gaat hierlangs: naar SharePoint en/of de centrale database |
+| `js/config.js` | SharePoint-koppeling (`tenantId`, `clientId`, map) en centrale database aan/uit |
 | `supabase/migrations/001_werkbon_centraal.sql` | Tabellen en beveiliging van de centrale database |
 | `data/seed.js` | Startgegevens: klanten, machines, onderdelen, monteurs |
 | `sw.js` | Offline werking |
-| `serve.ps1` | Kleine webserver om lokaal te testen (met `-Api` ook een test-database) |
+| `serve.ps1` | Kleine webserver om lokaal te testen (met `-Api` een test-database, met `-Graph` een nagebootste SharePoint) |

@@ -4,11 +4,18 @@
 # Lovable Cloud: /rest/v1/...), stored as JSON files in -DataDir. That is only
 # meant for testing the sync on this PC; the real central database is Supabase.
 #   powershell -ExecutionPolicy Bypass -File serve.ps1 -Api -TeamCode test
+#
+# With -Graph it imitates the part of Microsoft Graph that js/sharepoint.js uses
+# (/graph/v1.0/drives/.../items/...:/pad:), with the files of the "SharePoint folder"
+# in -SpDir. Only for testing the SharePoint sync on this PC, without Microsoft sign-in.
+#   powershell -ExecutionPolicy Bypass -File serve.ps1 -Port 8097 -Graph
 param(
   [int]$Port = 8080,
   [switch]$Api,
   [string]$DataDir = (Join-Path (Split-Path $PSScriptRoot) 'werkbon-centraal-test'),
-  [string]$TeamCode = 'test'
+  [string]$TeamCode = 'test',
+  [switch]$Graph,
+  [string]$SpDir = (Join-Path (Split-Path $PSScriptRoot) 'werkbon-sharepoint-test')
 )
 $root = $PSScriptRoot
 $types = @{
@@ -142,6 +149,117 @@ function Invoke-Api($ctx, [string]$rel) {
 }
 
 # ---------------------------------------------------------------------------
+# Test imitation of Microsoft Graph (subset used by js/sharepoint.js)
+# ---------------------------------------------------------------------------
+$uploads = @{}
+if ($Graph) {
+  Add-Type -AssemblyName System.Web.Extensions
+  New-Item -ItemType Directory -Force $SpDir | Out-Null
+  $SpDir = (Resolve-Path $SpDir).Path
+}
+
+# eTags are kept in memory: the file time on disk is not reliable enough for writes
+# that follow each other within milliseconds
+$etags = @{}
+
+function Get-SpItem([string]$file) {
+  $i = Get-Item -LiteralPath $file
+  $t = $i.LastWriteTimeUtc
+  $o = [ordered]@{
+    id = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($file.Substring($SpDir.Length)))
+    name = $i.Name
+    eTag = $(if ($etags[$file]) { $etags[$file] } else { "`"{0}`"" -f $t.Ticks })
+    lastModifiedDateTime = $t.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+    webUrl = "http://localhost:$Port/sp/" + $file.Substring($SpDir.Length + 1).Replace('\', '/')
+  }
+  if ($i.PSIsContainer) { $o.folder = @{ childCount = @(Get-ChildItem -LiteralPath $file).Count } } else { $o.size = $i.Length }
+  $o
+}
+
+function Save-SpFile([string]$file, [byte[]]$bytes) {
+  New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null
+  [IO.File]::WriteAllBytes($file, $bytes)
+  $etags[$file] = "`"{0}`"" -f [guid]::NewGuid().ToString('N')   # every write a new eTag
+}
+
+function Read-Body($req) {
+  $ms = New-Object IO.MemoryStream
+  $req.InputStream.CopyTo($ms)
+  , $ms.ToArray()
+}
+
+function Invoke-Graph($ctx, [string]$path) {
+  $req = $ctx.Request; $res = $ctx.Response
+  $res.Headers.Add('Access-Control-Allow-Origin', '*')
+  $res.Headers.Add('Access-Control-Allow-Headers', 'authorization, content-type, if-match, content-range')
+  $res.Headers.Add('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
+  if ($req.HttpMethod -eq 'OPTIONS') { $res.StatusCode = 204; return }
+  $ser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+  $ser.MaxJsonLength = [int]::MaxValue
+  $fout = { param($s, $m) Send-Body $res $s ($ser.Serialize(@{ error = @{ code = "$s"; message = $m } })) }
+
+  # Pre-authorised upload URL of an upload session
+  if ($path -match '^graph-upload/(\w+)$') {
+    $u = $uploads[$Matches[1]]
+    if (-not $u) { & $fout 404 'Upload-sessie onbekend'; return }
+    $bytes = Read-Body $req
+    $u.data.Write($bytes, 0, $bytes.Length)
+    if ($req.Headers['Content-Range'] -match '(\d+)-(\d+)/(\d+)' -and [long]$Matches[2] + 1 -lt [long]$Matches[3]) {
+      Send-Body $res 202 '{"nextExpectedRanges":[]}'; return
+    }
+    Save-SpFile $u.file $u.data.ToArray()
+    $uploads.Remove($Matches[1])
+    Write-Host ("{0:HH:mm:ss} Graph: groot bestand {1}" -f (Get-Date), $u.file.Substring($SpDir.Length))
+    Send-Body $res 201 ($ser.Serialize((Get-SpItem $u.file))); return
+  }
+
+  if (-not $req.Headers['Authorization']) { & $fout 401 'Geen token'; return }
+  if ($path -notmatch '^graph/v1\.0/drives/[^/]+/items/[^/:]+:/(.+?):(/(content|children|createUploadSession))?$') { & $fout 400 "Niet ondersteund: $path"; return }
+  $rel = $Matches[1]; $op = $Matches[3]
+  $file = [IO.Path]::GetFullPath((Join-Path $SpDir $rel.Replace('/', '\')))
+  if (-not $file.StartsWith($SpDir)) { & $fout 400 'Ongeldig pad'; return }
+  $bestaat = Test-Path -LiteralPath $file
+  $m = $req.HttpMethod
+
+  if ($m -eq 'GET' -and $op -eq 'children') {
+    if (-not $bestaat) { & $fout 404 'itemNotFound'; return }
+    $items = @(Get-ChildItem -LiteralPath $file | ForEach-Object { Get-SpItem $_.FullName })
+    Send-Body $res 200 ($ser.Serialize(@{ value = [object[]]$items })); return
+  }
+  if ($m -eq 'GET' -and $op -eq 'content') {
+    if (-not $bestaat -or (Test-Path -LiteralPath $file -PathType Container)) { & $fout 404 'itemNotFound'; return }
+    $bytes = [IO.File]::ReadAllBytes($file)
+    $res.ContentType = 'application/octet-stream'
+    $res.ContentLength64 = $bytes.Length
+    $res.OutputStream.Write($bytes, 0, $bytes.Length); return
+  }
+  if ($m -eq 'GET' -and -not $op) {
+    if (-not $bestaat) { & $fout 404 'itemNotFound'; return }
+    Send-Body $res 200 ($ser.Serialize((Get-SpItem $file))); return
+  }
+  if ($m -eq 'PUT' -and $op -eq 'content') {
+    $ifMatch = $req.Headers['If-Match']
+    if ($ifMatch -and (-not $bestaat -or (Get-SpItem $file).eTag -ne $ifMatch)) { & $fout 412 'Intussen gewijzigd'; return }
+    Save-SpFile $file (Read-Body $req)
+    Write-Host ("{0:HH:mm:ss} Graph: {1}" -f (Get-Date), $rel)
+    Send-Body $res ($(if ($bestaat) { 200 } else { 201 })) ($ser.Serialize((Get-SpItem $file))); return
+  }
+  if ($m -eq 'POST' -and $op -eq 'createUploadSession') {
+    $id = [guid]::NewGuid().ToString('N')
+    $uploads[$id] = @{ file = $file; data = New-Object IO.MemoryStream }
+    Send-Body $res 200 ($ser.Serialize(@{ uploadUrl = "http://localhost:$Port/graph-upload/$id" })); return
+  }
+  if ($m -eq 'DELETE' -and -not $op) {
+    if (-not $bestaat) { & $fout 404 'itemNotFound'; return }
+    Remove-Item -LiteralPath $file -Recurse -Force
+    foreach ($k in @($etags.Keys)) { if ($k -eq $file -or $k.StartsWith("$file\")) { $etags.Remove($k) } }
+    Write-Host ("{0:HH:mm:ss} Graph: verwijderd {1}" -f (Get-Date), $rel)
+    $res.StatusCode = 204; return
+  }
+  & $fout 405 'Methode niet ondersteund'
+}
+
+# ---------------------------------------------------------------------------
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
 $listener.Start()
@@ -154,6 +272,7 @@ try {
     try {
       $path = [Uri]::UnescapeDataString($ctx.Request.Url.AbsolutePath).TrimStart('/')
       if ($Api -and $path.StartsWith('rest/v1/')) { Invoke-Api $ctx $path.Substring(8); continue }
+      if ($Graph -and ($path.StartsWith('graph/') -or $path.StartsWith('graph-upload/'))) { Invoke-Graph $ctx $path; continue }
       if (-not $path) { $path = 'index.html' }
       $file = [IO.Path]::GetFullPath((Join-Path $root $path))
       if ($file.StartsWith($root) -and (Test-Path $file -PathType Leaf)) {

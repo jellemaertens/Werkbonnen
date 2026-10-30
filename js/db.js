@@ -2,10 +2,11 @@
 // pushes changes to the central database whenever the device is online.
 const DB = (() => {
   const NAME = 'werkbonnen';
-  const VERSION = 3;
+  const VERSION = 4;
   // outbox: changes waiting to be sent to the central database
   // fotos: photos of a werkbon (image as a Blob), found through the werkbonId index
-  const STORES = ['klanten', 'machines', 'onderdelen', 'werkbonnen', 'monteurs', 'settings', 'outbox', 'fotos'];
+  // spwachtrij: changes waiting to be sent to SharePoint (js/sharepoint.js)
+  const STORES = ['klanten', 'machines', 'onderdelen', 'werkbonnen', 'monteurs', 'settings', 'outbox', 'fotos', 'spwachtrij'];
   let dbPromise;
 
   function open() {

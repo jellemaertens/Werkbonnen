@@ -579,6 +579,8 @@ async function viewWerkbonnen() {
         <a class="btn primary" href="#/werkbon/nieuw">＋ Nieuwe werkbon</a>
       </div>
     </div>
+    ${SP.ingesteld() && !SP.aangemeld() ? `<div class="locked-note"><span>Meld je aan met je BOSS-account om de werkbonnen van iedereen te zien en de jouwe te delen via SharePoint.</span>
+      <button type="button" class="btn small primary" data-sp-in>Aanmelden</button></div>` : ''}
     <div class="toolbar">
       <div class="search"><input type="search" placeholder="Zoek op klant, nummer, machine, monteur…" value="${esc(ui.wbQuery)}" data-q></div>
       <div class="seg" role="tablist">
@@ -609,6 +611,7 @@ async function viewWerkbonnen() {
     draw();
   }));
   $('[data-export]').addEventListener('click', () => exportWerkbonnenCsv(all));
+  $('[data-sp-in]')?.addEventListener('click', () => SP.aanmelden());
 }
 
 function exportWerkbonnenCsv(list) {
@@ -634,6 +637,7 @@ function exportWerkbonnenCsv(list) {
    ========================================================================= */
 async function viewWerkbon(id) {
   if (id === 'nieuw') {
+    await SP.syncVoorNieuw();   // newest numbers from colleagues first
     const wb = await newWerkbon();
     await Sync.put('werkbonnen', wb);
     location.replace(`#/werkbon/${wb.id}`);
@@ -778,7 +782,8 @@ function secWerk() {
 // Photos are stored per werkbon in their own store (as a Blob), so the werkbon list stays light
 const FOTO_MAX = 1600;          // longest side in px after shrinking
 const fotoUrls = new Map();     // foto id -> object URL, released when leaving the werkbon
-const fotoUrl = f => { if (!fotoUrls.has(f.id)) fotoUrls.set(f.id, URL.createObjectURL(f.blob)); return fotoUrls.get(f.id); };
+// A photo from a colleague may still be in SharePoint only (blob null): it is downloaded when the werkbon opens
+const fotoUrl = f => { if (!f.blob) return ''; if (!fotoUrls.has(f.id)) fotoUrls.set(f.id, URL.createObjectURL(f.blob)); return fotoUrls.get(f.id); };
 function vrijFotoUrls() { for (const u of fotoUrls.values()) URL.revokeObjectURL(u); fotoUrls.clear(); }
 const fotosVan = async werkbonId => (await DB.byIndex('fotos', 'werkbonId', werkbonId)).sort((a, b) => a.datum.localeCompare(b.datum));
 
@@ -810,7 +815,9 @@ async function voegFotosToe(files) {
   for (const file of files) {
     try {
       const blob = await verkleinFoto(file);
-      await DB.put('fotos', { id: uid(), werkbonId: wb.id, blob, naam: file.name || 'foto.jpg', bijschrift: '', datum: new Date().toISOString() });
+      const id = uid();
+      await DB.put('fotos', { id, werkbonId: wb.id, blob, naam: file.name || 'foto.jpg', bijschrift: '', datum: new Date().toISOString() });
+      await SP.foto(id, wb.id);
       n++;
     } catch (e) {
       console.error(e);
@@ -834,18 +841,21 @@ function secFotos() {
     <label class="check"><input type="checkbox" data-f="fotosOpPdf" ${wb.fotosOpPdf !== false ? 'checked' : ''}> Foto's toevoegen aan de werkbon-PDF</label>`);
 }
 
-async function tekenFotos() {
+async function tekenFotos(ophalen = true) {
   const wb = App.wb;
   if (!wb || !$('[data-fotos]')) return;
   const fotos = await fotosVan(wb.id);
   const el = $('[data-fotos]');
   if (App.wb !== wb || !el) return;
-  el.innerHTML = fotos.map(f => `
+  el.innerHTML = fotos.map(f => f.blob ? `
     <div class="foto" role="button" tabindex="0" data-foto="${esc(f.id)}" title="${esc(f.bijschrift || 'Foto bekijken')}">
       <img src="${fotoUrl(f)}" alt="${esc(f.bijschrift || 'Foto')}">${f.bijschrift ? `<span>${esc(f.bijschrift)}</span>` : ''}
-    </div>`).join('') || '<span class="muted small">Nog geen foto\'s.</span>';
+    </div>` : `
+    <div class="foto foto-wacht" title="Staat in SharePoint, wordt opgehaald zodra er internet is">☁<span>${esc(f.bijschrift || 'Foto ophalen…')}</span></div>`).join('') || '<span class="muted small">Nog geen foto\'s.</span>';
   const teller = $('[data-foto-aantal]');
   if (teller) teller.textContent = fotos.length ? `(${fotos.length})` : '';
+  // Photos taken on another device: fetch them from SharePoint and draw again
+  if (ophalen && fotos.some(f => !f.blob) && await SP.zorgVoorFotos(wb.id)) tekenFotos(false);
 }
 
 async function openFotoModal(id) {
@@ -867,10 +877,12 @@ async function openFotoModal(id) {
   $('[data-bijschrift]', m.el).addEventListener('change', async e => {
     f.bijschrift = e.target.value.trim();
     await DB.put('fotos', f);
+    await SP.foto(f.id, wb.id);
   });
   $('[data-del]', m.el)?.addEventListener('click', async () => {
     if (!confirm('Deze foto verwijderen?')) return;
     await DB.del('fotos', f.id);
+    await SP.foto(f.id, wb.id);
     URL.revokeObjectURL(fotoUrls.get(f.id));
     fotoUrls.delete(f.id);
     m.close();
@@ -1046,6 +1058,7 @@ function bindWerkbon() {
         // A reopened werkbon gets the number series of its monteur, if it carries another prefix
         const renumbered = await nummerVoorMonteur(wb);
         await saveNow(); renderWerkbon();
+        await SP.publiceer(wb.id);   // removes the PDFs from the customer folder until it is finished again
         if (!renumbered) toast('Werkbon heropend');
         return;
       }
@@ -1057,6 +1070,7 @@ function bindWerkbon() {
         return pdfProforma(wb, App.settings);
       case 'duplicate': {
         await flushSave();
+        await SP.syncVoorNieuw();
         const copy = await newWerkbon(wb.monteur || undefined);
         Object.assign(copy, {
           klantId: wb.klantId, klant: wb.klant, machineId: wb.machineId, machine: wb.machine,
@@ -1072,7 +1086,7 @@ function bindWerkbon() {
       case 'delete':
         if (!confirm(`Werkbon ${wb.nummer} definitief verwijderen?`)) return;
         clearTimeout(saveTimer); saveTimer = null;
-        for (const f of await fotosVan(wb.id)) await DB.del('fotos', f.id);
+        for (const f of await fotosVan(wb.id)) { await DB.del('fotos', f.id); await SP.foto(f.id, wb.id); }
         await Sync.del('werkbonnen', wb.id);
         App.wb = null;
         location.hash = '#/';
@@ -1213,6 +1227,7 @@ function openSignModal() {
     m.close();
     await saveNow();
     renderWerkbon();
+    await SP.publiceer(wb.id);   // werkbon-PDF, pro forma and photos to the customer folder in SharePoint
     toast('Werkbon ondertekend ✓');
   });
   check();
@@ -1240,6 +1255,7 @@ function openUnsignedModal() {
     m.close();
     await saveNow();
     renderWerkbon();
+    await SP.publiceer(wb.id);
     toast('Werkbon afgerond');
   });
 }
@@ -1367,6 +1383,7 @@ async function viewKlant(id) {
     location.hash = '#/klanten';
   });
   $('[data-wb]').addEventListener('click', async () => {
+    await SP.syncVoorNieuw();
     const wb = await newWerkbon();
     wb.klantId = k.id; wb.klant = snapKlant(k);
     if (ms.length === 1) { wb.machineId = ms[0].id; wb.machine = snapMachine(ms[0]); }
@@ -1494,7 +1511,13 @@ function drawTopbar() {
       <button type="button" class="sync-badge" id="sync-badge" hidden></button>
       <button type="button" class="who" id="who" title="Andere monteur"></button></div>`);
     $('#who').addEventListener('click', () => openAanmelden(() => route()));
-    $('#sync-badge').addEventListener('click', () => { Sync.syncNow(); location.hash = '#/instellingen'; });
+    $('#sync-badge').addEventListener('click', () => {
+      if (SP.ingesteld()) {
+        if (SP.state.status === 'aanmelden') return SP.aanmelden();
+        SP.syncNu();
+      } else Sync.syncNow();
+      location.hash = '#/instellingen';
+    });
   }
   $('#who').innerHTML = `<span class="who-name">${esc(App.settings.mijnNaam || 'Aanmelden')}</span>`;
   $('#who').setAttribute('aria-label', `Aangemeld als ${App.settings.mijnNaam || '—'}; andere monteur kiezen`);
@@ -1508,12 +1531,16 @@ function drawTopbar() {
 }
 
 // text: full status (Instellingen), short: compact badge in the top bar
+// SharePoint when it is set up, otherwise the (switched off) central database
+const syncBron = () => (SP.ingesteld() ? SP.state : Sync.state);
+
 function syncStatusText() {
-  const { status, message, pending, lastSync } = Sync.state;
+  const { status, message, pending, lastSync } = syncBron();
   const wacht = pending ? `${pending} te verzenden` : '';
   const tijd = lastSync ? fmtDateTime(lastSync).slice(-5) : '';
   switch (status) {
-    case 'uit': return { cls: 'off', text: 'Geen centrale database ingesteld', short: '' };
+    case 'uit': return { cls: 'off', text: 'Geen centrale opslag ingesteld', short: '' };
+    case 'aanmelden': return { cls: 'warn', text: `${message || 'Meld je aan bij SharePoint'}${wacht ? ' · ' + wacht : ''}`, short: 'Aanmelden' };
     case 'offline': return { cls: 'warn', text: [message || 'Offline', wacht].filter(Boolean).join(' · '), short: `Offline${pending ? ' · ' + pending : ''}` };
     case 'bezig': return { cls: 'busy', text: 'Synchroniseren…', short: '↻' };
     case 'fout': return { cls: 'err', text: `⚠ ${message}${wacht ? ' · ' + wacht : ''}`, short: `⚠${pending ? ' ' + pending : ''}` };
@@ -1527,7 +1554,7 @@ function drawSyncStatus() {
   const { cls, text, short } = syncStatusText();
   const badge = $('#sync-badge');
   if (badge) {
-    badge.hidden = Sync.state.status === 'uit';
+    badge.hidden = syncBron().status === 'uit';
     badge.className = `sync-badge ${cls}`;
     badge.textContent = short;
     badge.title = text;
@@ -1535,6 +1562,15 @@ function drawSyncStatus() {
   const el = $('[data-sync-status]');
   if (el) el.textContent = text;
 }
+
+SP.on(async type => {
+  if (type === 'status') return drawSyncStatus();
+  // New werkbonnen or lists from colleagues: refresh the overview and lists, never the open editor or a dialog
+  await loadCache();
+  drawTopbar();
+  const hash = location.hash || '#/';
+  if (!App.wb && !$('#modal-root').children.length && /^#?\/?$|^#\/(klanten|klant\/|onderdelen|beheer)/.test(hash)) route();
+});
 
 Sync.on(async type => {
   if (type === 'status') return drawSyncStatus();
@@ -1724,6 +1760,17 @@ async function viewInstellingen() {
         <button type="button" class="btn small primary" data-sync-now>Nu synchroniseren</button></div>
     </section>`}
 
+    ${SP.ingesteld() ? `<section class="card"><h2>SharePoint <span class="step">Werkbonnen Boss</span></h2>
+      <p class="small muted" style="margin-top:0">Werkbonnen, foto's, klanten, machines en onderdelen worden gedeeld via SharePoint, zodat iedereen dezelfde gegevens ziet.
+        Een afgeronde werkbon komt met de werkbon-PDF, de pro forma en de foto's in <b>Klanten › klantnaam › datum en uur van het bezoek</b>.</p>
+      <div class="field"><span>Aangemeld bij Microsoft</span>
+        <div class="row"><b>${esc(SP.aangemeld() ? (SP.state.gebruiker || 'ja') : 'niet aangemeld')}</b>
+          ${SP.aangemeld() ? '<button type="button" class="btn small" data-sp-uit>Afmelden</button>' : '<button type="button" class="btn small primary" data-sp-in>Aanmelden</button>'}</div></div>
+      <div class="row" style="margin-top:8px"><span data-sync-status class="small"></span><span class="spacer"></span>
+        ${SP.mapLink() ? `<a class="btn small" href="${esc(SP.mapLink())}" target="_blank" rel="noopener">Map openen</a>` : ''}
+        <button type="button" class="btn small primary" data-sp-nu>Nu synchroniseren</button></div>
+    </section>` : ''}
+
     <section class="card"><h2>Gegevens</h2>
       <p class="small muted" style="margin-top:0">Op dit toestel: ${counts.wb} werkbonnen, ${App.klanten.length} klanten, ${App.onderdelen.length} onderdelen. ${centraalIngesteld()
         ? 'Werkbonnen worden naar de centrale database gestuurd zodra er verbinding is; klanten, machines en onderdelen komen van daar.'
@@ -1755,6 +1802,13 @@ async function viewInstellingen() {
   root.addEventListener('change', e => { if (e.target.dataset.s?.startsWith('centraal.')) Sync.schedule(500); });
 
   $('[data-wissel]').addEventListener('click', () => openAanmelden(() => viewInstellingen()));
+  $('[data-sp-in]')?.addEventListener('click', () => SP.aanmelden());
+  $('[data-sp-uit]')?.addEventListener('click', () => {
+    if (!confirm('Afmelden bij Microsoft? De gegevens blijven op dit toestel, maar worden niet meer gedeeld tot je opnieuw aanmeldt.')) return;
+    SP.afmelden();
+    viewInstellingen();
+  });
+  $('[data-sp-nu]')?.addEventListener('click', () => SP.syncNu());
   $('[data-sync-now]')?.addEventListener('click', async () => { await saveSettings(true); await Sync.syncNow(); });
   $('[data-test]')?.addEventListener('click', async () => {
     await saveSettings(true);
@@ -1897,7 +1951,8 @@ async function boot() {
   App.settings = mergeDeep(DEFAULT_SETTINGS, stored);
   // A new seed version replaces all customers and machines on this device once. Not with a central
   // database: there the server's lists are leading (use Beheer to upload them there instead).
-  if (window.SEED?.versie && SEED.klanten?.length && App.settings.seedVersie !== SEED.versie && !centraalIngesteld()) {
+  // Not with SharePoint either: there the shared lists are leading
+  if (window.SEED?.versie && SEED.klanten?.length && App.settings.seedVersie !== SEED.versie && !centraalIngesteld() && !(SP.ingesteld() && SP.aangemeld())) {
     await vervangStartgegevens(SEED);
   }
   // Central database switched off: changes still waiting to be sent will never go anywhere
@@ -1907,6 +1962,7 @@ async function boot() {
   await loadCache();
   drawTopbar();
   Sync.start(centraalConfig); // before route(): views ask Sync whether the central database is set up
+  await SP.start();            // finishes a Microsoft sign-in that just came back, then syncs in the background
   await maakNummerreeksUniek();
   await route();
   if (!App.settings.monteurId) openAanmelden();

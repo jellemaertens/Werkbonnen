@@ -66,20 +66,26 @@ const Sync = (() => {
     schedule();
   }
 
+  // Every local change also goes to SharePoint when that is set up (js/sharepoint.js)
   async function put(store, obj) {
+    SP.stempel(store, [obj]);
     await DB.put(store, obj);
     await queue([outboxItem(store, obj, false)]);
+    await SP.lokaal(store, [obj]);
     return obj;
   }
   async function bulkPut(store, arr) {
+    SP.stempel(store, arr);
     await DB.bulkPut(store, arr);
     await queue(arr.map(o => outboxItem(store, o, false)));
+    await SP.lokaal(store, arr);
     return arr.length;
   }
   async function del(store, id) {
     const old = await DB.get(store, id);
     await DB.del(store, id);
     await queue([outboxItem(store, old || { id }, true)]);
+    await SP.lokaal(store, [old || { id }], true);
   }
   // Send everything in these local stores (e.g. to fill an empty central database)
   async function queueAll(stores) {

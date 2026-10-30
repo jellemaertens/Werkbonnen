@@ -144,7 +144,8 @@ const PDF = (() => {
 
 async function pdfWerkbon(wb, settings) {
   // The photos of this werkbon go on an extra page, unless switched off on the werkbon
-  const fotos = wb.fotosOpPdf === false ? [] : await fotosVan(wb.id);
+  if (wb.fotosOpPdf !== false) await SP.zorgVoorFotos(wb.id);   // photos taken on another device
+  const fotos = wb.fotosOpPdf === false ? [] : (await fotosVan(wb.id)).filter(f => f.blob);
   const items = fotos.map(f => ({ src: URL.createObjectURL(f.blob), bijschrift: f.bijschrift }));
   try {
     await PDF.maak(werkbonPrintHtml(wb, settings, items), `Werkbon ${wb.nummer} ${wb.klant?.naam || ''}`.trim());
