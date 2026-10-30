@@ -315,7 +315,8 @@ async function newWerkbon(monteur = App.settings.mijnNaam || '') {
     onderdelen: [],
     werkuren: 0, werkurenHandmatig: false, uurtarief: t.uurtarief,
     aanrijkost: { actief: t.voorrijtarief > 0, bedrag: t.voorrijtarief },
-    brandstoftoeslag: { actief: t.brandstoftoeslag > 0, bedrag: t.brandstoftoeslag },
+    // Brandstoftoeslag is off by default; tick it on the werkbon when it applies
+    brandstoftoeslag: { actief: false, bedrag: t.brandstoftoeslag },
     extra: [],
     btw: t.btw,
     handtekening: null, nietOndertekend: '', afgerondOp: null,
