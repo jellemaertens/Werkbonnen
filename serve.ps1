@@ -153,7 +153,7 @@ function Invoke-Api($ctx, [string]$rel) {
 # ---------------------------------------------------------------------------
 $uploads = @{}
 if ($Graph) {
-  Add-Type -AssemblyName System.Web.Extensions
+  Add-Type -AssemblyName System.Web.Extensions, System.Web
   New-Item -ItemType Directory -Force $SpDir | Out-Null
   $SpDir = (Resolve-Path $SpDir).Path
 }
@@ -197,6 +197,25 @@ function Invoke-Graph($ctx, [string]$path) {
   $ser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
   $ser.MaxJsonLength = [int]::MaxValue
   $fout = { param($s, $m) Send-Body $res $s ($ser.Serialize(@{ error = @{ code = "$s"; message = $m } })) }
+
+  # Imitation of the Microsoft sign-in (/login/authorize and /login/token). There is a Microsoft
+  # session unless login_hint starts with "geen-sessie": then prompt=none fails, as with Microsoft.
+  if ($path -eq 'login/authorize') {
+    $q = [Web.HttpUtility]::ParseQueryString($req.Url.Query)
+    $terug = $q['redirect_uri'] + '?state=' + [Uri]::EscapeDataString($q['state'])
+    if ($q['prompt'] -eq 'none' -and ("$($q['login_hint'])" -eq '' -or "$($q['login_hint'])".StartsWith('geen-sessie'))) {
+      $terug += '&error=login_required&error_description=' + [Uri]::EscapeDataString('AADSTS50058: no session')
+    } else {
+      $terug += '&code=test-' + [guid]::NewGuid().ToString('N')
+    }
+    Write-Host ("{0:HH:mm:ss} Login: prompt={1} hint={2}" -f (Get-Date), $q['prompt'], $q['login_hint'])
+    $res.Redirect($terug); return
+  }
+  if ($path -eq 'login/token') {
+    $b64 = { param($s) [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
+    $idToken = (& $b64 '{"alg":"none"}') + '.' + (& $b64 '{"name":"Test Monteur","preferred_username":"test.monteur@boss.test"}') + '.x'
+    Send-Body $res 200 ($ser.Serialize(@{ access_token = 'test'; expires_in = 3600; refresh_token = 'r-' + [guid]::NewGuid().ToString('N'); id_token = $idToken })); return
+  }
 
   # Pre-authorised upload URL of an upload session
   if ($path -match '^graph-upload/(\w+)$') {
@@ -272,7 +291,7 @@ try {
     try {
       $path = [Uri]::UnescapeDataString($ctx.Request.Url.AbsolutePath).TrimStart('/')
       if ($Api -and $path.StartsWith('rest/v1/')) { Invoke-Api $ctx $path.Substring(8); continue }
-      if ($Graph -and ($path.StartsWith('graph/') -or $path.StartsWith('graph-upload/'))) { Invoke-Graph $ctx $path; continue }
+      if ($Graph -and ($path.StartsWith('graph/') -or $path.StartsWith('graph-upload/') -or $path.StartsWith('login/'))) { Invoke-Graph $ctx $path; continue }
       if (-not $path) { $path = 'index.html' }
       $file = [IO.Path]::GetFullPath((Join-Path $root $path))
       if ($file.StartsWith($root) -and (Test-Path $file -PathType Leaf)) {

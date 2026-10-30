@@ -116,7 +116,7 @@ Hoe het synchroniseert:
 4. Geef de **Map-id (tenant)** en **Toepassings-id (client)** van het overzicht door. Die komen in `js/config.js` bij `tenantId` en `clientId`. Het zijn geen geheimen; er is geen clientgeheim nodig.
 5. Zorg dat elke monteur **bewerkrechten** heeft op de map Werkbonnen Boss.
 
-Voor een app met één pagina blijft een aanmelding volgens Microsoft maximaal 24 uur geldig. Daarna vraagt de app opnieuw om aan te melden (één klik, meestal zonder wachtwoord). Wat intussen gemaakt is, blijft in de wachtrij tot dan.
+Voor een app met één pagina blijft een aanmelding volgens Microsoft maximaal 24 uur geldig. Na 20 uur meldt de app zich daarom **vanzelf opnieuw aan** met het laatst gebruikte account: ze gaat even langs Microsoft (zonder scherm, `prompt=none`) en komt aangemeld terug. Met een actieve Microsoft 365-sessie op het toestel is daar geen klik voor nodig. Dat gebeurt enkel wanneer er geen werkbon en geen venster open staat, dus nooit tijdens het invullen of ondertekenen, en hoogstens één keer per 10 minuten. Lukt het niet (geen Microsoft-sessie, geen internet), dan verschijnt de knop **Aanmelden**. Wie zelf afmeldt bij **Instellingen**, wordt niet meer vanzelf aangemeld. Wat intussen gemaakt is, blijft in de wachtrij.
 
 ### Lokaal testen met een nagebootste SharePoint
 
@@ -132,7 +132,7 @@ Start de app op twee poorten (bv. 8095 en 8096: twee "toestellen") en voer in de
 localStorage.setItem('werkbonnen.sp.test', JSON.stringify({ graph: 'http://localhost:8097/graph/v1.0', driveId: 'test', mapId: 'root', testToken: true }))
 ```
 
-Dit werkt enkel op `localhost` en slaat de Microsoft-aanmelding over. Getest: gedeelde nummering, werkbonnen en foto's van het ene toestel op het andere, de bezoekmap met PDF's en foto's, heropenen, wissen, en klanten die op beide toestellen tegelijk gewijzigd worden. De echte aanmelding bij Microsoft is pas te testen na de app-registratie.
+Dit werkt enkel op `localhost` en slaat de Microsoft-aanmelding over. Om het aanmelden zelf te testen, gebruik je in plaats van `testToken: true` de nagebootste aanmelding van dezelfde server: `tenantId: 't', clientId: 'c', login: 'http://localhost:8097/login'`. Een `login_hint` die begint met `geen-sessie` speelt na dat er geen Microsoft-sessie is. Getest: gedeelde nummering, werkbonnen en foto's van het ene toestel op het andere, de bezoekmap met PDF's en foto's, heropenen, wissen, klanten die op beide toestellen tegelijk gewijzigd worden, en het vanzelf opnieuw aanmelden (gelukt, mislukt zonder te blijven proberen, en niet terwijl een werkbon open staat). De echte aanmelding bij Microsoft is pas te testen na de app-registratie.
 
 ## Centrale database opzetten (Lovable Cloud / Supabase)
 

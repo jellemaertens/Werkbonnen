@@ -5,7 +5,7 @@
 //   App-gegevens/werkbonnen/<id>.json   one file per werkbon (also concepts), with photo captions
 //   App-gegevens/fotos/<id>.jpg         the photos themselves
 //   App-gegevens/lijsten.json           klanten, machines, onderdelen, monteurs (+ deleted ids)
-//   Klanten/<klant>/<nummer>/           for a finished werkbon: werkbon-PDF, pro forma-PDF, photos
+//   Klanten/<klant>/<datum uur>/        per visit, once finished: werkbon-PDF, pro forma-PDF, photos
 //
 // Offline first: every local change goes into the IndexedDB store "spwachtrij" and is sent when
 // the device is online and signed in. An item only leaves the queue after SharePoint accepted it.
@@ -13,10 +13,17 @@
 // Sign-in: Microsoft Entra ID, authorization code flow with PKCE for a single-page app
 // (sharepoint.tenantId + clientId in js/config.js, set up once by IT). No password ever passes
 // through the app; it keeps the Microsoft tokens in this browser only.
+// Microsoft lets a single-page app stay signed in for 24 hours at most. Before that runs out, the
+// app signs in again by itself (prompt=none with the last account): with an active Microsoft 365
+// session that needs no click. Only when that fails does the "Aanmelden" button appear.
 const SP = (() => {
   const SCOPES = 'openid profile offline_access User.Read Files.ReadWrite.All';
   const AUTH_KEY = 'werkbonnen.sp.auth';
   const PKCE_KEY = 'werkbonnen.sp.pkce';
+  const HINT_KEY = 'werkbonnen.sp.account';    // last signed-in account, for the automatic sign-in
+  const STIL_KEY = 'werkbonnen.sp.stil';       // time of the last automatic attempt (this tab)
+  const VERNIEUW_NA = 20 * 3600 * 1000;        // renew after 20 h, before Microsoft's 24 h limit
+  const STIL_PAUZE = 10 * 60 * 1000;           // at most one automatic attempt per 10 minutes
   const APP = 'App-gegevens';
   const LIJSTEN = ['klanten', 'machines', 'onderdelen', 'monteurs'];
   const MAX_SIMPLE = 3.5 * 1024 * 1024;   // Graph: simple upload up to 4 MB, larger via an upload session
@@ -46,21 +53,39 @@ const SP = (() => {
   const b64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const random = n => b64url(crypto.getRandomValues(new Uint8Array(n)));
   const redirectUri = () => location.origin + location.pathname;
-  const authBase = () => `https://login.microsoftonline.com/${cfg().tenantId}/oauth2/v2.0`;
+  const authBase = () => cfg().login || `https://login.microsoftonline.com/${cfg().tenantId}/oauth2/v2.0`;   // login: local tests only
   const leesAuth = () => { try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; } };
   const bewaarAuth = a => { if (a) localStorage.setItem(AUTH_KEY, JSON.stringify(a)); else localStorage.removeItem(AUTH_KEY); };
   const aangemeld = () => !!cfg().testToken || !!leesAuth()?.refresh;
 
-  async function aanmelden() {
+  // stil: no screen at Microsoft (prompt=none); comes straight back, signed in or with an error
+  async function aanmelden(stil = false) {
     const verifier = random(48);
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
     const st = random(16);
-    sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state: st, hash: location.hash }));
+    sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state: st, hash: location.hash, stil }));
     const q = new URLSearchParams({
       client_id: cfg().clientId, response_type: 'code', redirect_uri: redirectUri(), response_mode: 'query',
-      scope: SCOPES, state: st, code_challenge: challenge, code_challenge_method: 'S256', prompt: 'select_account',
+      scope: SCOPES, state: st, code_challenge: challenge, code_challenge_method: 'S256',
+      prompt: stil ? 'none' : 'select_account',
     });
+    const hint = localStorage.getItem(HINT_KEY);
+    if (stil && hint) q.set('login_hint', hint);
     location.href = `${authBase()}/authorize?${q}`;
+  }
+
+  // Automatic sign-in: only with a known account, online, and when nobody is busy in a werkbon or dialog
+  function magStilAanmelden() {
+    if (cfg().testToken || !ingesteld() || !navigator.onLine || !localStorage.getItem(HINT_KEY)) return false;
+    const a = leesAuth();
+    if (a?.refresh && Date.now() - (a.sinds || 0) < VERNIEUW_NA) return false;   // still valid long enough
+    if (Date.now() - Number(sessionStorage.getItem(STIL_KEY) || 0) < STIL_PAUZE) return false;
+    if (openWerkbon() || document.querySelector('#modal-root')?.children.length) return false;
+    return true;
+  }
+  function stilAanmelden() {
+    sessionStorage.setItem(STIL_KEY, String(Date.now()));
+    aanmelden(true);
   }
 
   async function tokenAanvraag(params) {
@@ -76,11 +101,14 @@ const SP = (() => {
       throw e;
     }
     const vorige = leesAuth() || {};
-    const a = { access: data.access_token, exp: Date.now() + (data.expires_in - 120) * 1000, refresh: data.refresh_token || vorige.refresh, naam: vorige.naam };
+    const a = { access: data.access_token, exp: Date.now() + (data.expires_in - 120) * 1000, refresh: data.refresh_token || vorige.refresh, naam: vorige.naam, sinds: vorige.sinds };
+    // A refresh does not extend the 24 h of a single-page app: only a new sign-in starts them again
+    if (params.grant_type === 'authorization_code') a.sinds = Date.now();
     if (data.id_token) {
       try {
         const p = JSON.parse(decodeURIComponent(escape(atob(data.id_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))));
         a.naam = p.name || p.preferred_username || a.naam;
+        if (p.preferred_username) localStorage.setItem(HINT_KEY, p.preferred_username);
       } catch { /* name is optional */ }
     }
     bewaarAuth(a);
@@ -96,6 +124,8 @@ const SP = (() => {
     const pk = JSON.parse(sessionStorage.getItem(PKCE_KEY) || 'null');
     sessionStorage.removeItem(PKCE_KEY);
     history.replaceState(null, '', redirectUri() + (pk?.hash || ''));
+    // Automatic sign-in not possible (no Microsoft session, consent needed...): just show the button
+    if (p.has('error') && pk?.stil) return setStatus('aanmelden', 'Meld je aan met je BOSS-account');
     if (p.has('error')) return setStatus('aanmelden', (p.get('error_description') || p.get('error')).split(/\r?\n/)[0]);
     if (!pk || pk.state !== p.get('state')) return setStatus('aanmelden', 'Aanmelden onderbroken, probeer opnieuw');
     try {
@@ -118,8 +148,10 @@ const SP = (() => {
     }
   }
 
+  // Signing out on purpose also stops the automatic sign-in
   function afmelden() {
     bewaarAuth(null);
+    localStorage.removeItem(HINT_KEY);
     state.gebruiker = '';
     setStatus(ingesteld() ? 'aanmelden' : 'uit', 'Afgemeld');
   }
@@ -493,6 +525,7 @@ const SP = (() => {
   async function runOnce() {
     await telWachtrij();
     if (!ingesteld()) return setStatus('uit');
+    if (magStilAanmelden()) { setStatus('aanmelden', 'Opnieuw aanmelden…'); return stilAanmelden(); }
     if (!aangemeld()) return setStatus('aanmelden', 'Meld je aan met je BOSS-account');
     if (!navigator.onLine) return setStatus('offline', 'Geen internet');
     setStatus('bezig');
@@ -509,7 +542,8 @@ const SP = (() => {
     } catch (e) {
       console.warn('SharePoint-sync mislukt', e);
       await telWachtrij();
-      if (e instanceof AuthNodig) setStatus('aanmelden', e.message);
+      if (e instanceof AuthNodig && magStilAanmelden()) { setStatus('aanmelden', 'Opnieuw aanmelden…'); stilAanmelden(); }
+      else if (e instanceof AuthNodig) setStatus('aanmelden', e.message);
       else if (e instanceof HttpFout) setStatus('fout', e.status === 403 ? 'Geen toegang tot de SharePoint-map' : e.message);
       else setStatus('offline', 'SharePoint niet bereikbaar');
     }
