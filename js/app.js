@@ -547,6 +547,7 @@ const routes = [
 async function route() {
   await flushSave();
   App.wb = null;
+  vrijFotoUrls();
   $('#modal-root').innerHTML = '';
   document.body.style.overflow = '';
   const hash = location.hash || '#/';
@@ -690,6 +691,7 @@ function renderWerkbon() {
       ${secKlant()}
       ${secBezoek()}
       ${secWerk()}
+      ${secFotos()}
       ${secOnderdelen()}
       ${secKosten()}
     </fieldset>
@@ -703,6 +705,7 @@ function renderWerkbon() {
       <button type="button" class="btn primary" data-action="print">${locked ? 'Werkbon' : 'PDF'}</button>
     </div></div>`);
   bindWerkbon();
+  tekenFotos();
 }
 
 const sec = (id, title, step, inner) => `<section class="card" data-sec="${id}"><h2>${title}${step ? `<span class="step">${step}</span>` : ''}</h2>${inner}</section>`;
@@ -770,6 +773,110 @@ function secWerk() {
       ${App.settings.snelteksten.map(t => `<button type="button" class="btn small" data-action="quick-text" data-text="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}`);
 }
 
+/* ---------- Foto's ---------- */
+// Photos are stored per werkbon in their own store (as a Blob), so the werkbon list stays light
+const FOTO_MAX = 1600;          // longest side in px after shrinking
+const fotoUrls = new Map();     // foto id -> object URL, released when leaving the werkbon
+const fotoUrl = f => { if (!fotoUrls.has(f.id)) fotoUrls.set(f.id, URL.createObjectURL(f.blob)); return fotoUrls.get(f.id); };
+function vrijFotoUrls() { for (const u of fotoUrls.values()) URL.revokeObjectURL(u); fotoUrls.clear(); }
+const fotosVan = async werkbonId => (await DB.byIndex('fotos', 'werkbonId', werkbonId)).sort((a, b) => a.datum.localeCompare(b.datum));
+
+// Shrinks a camera photo to at most FOTO_MAX px (JPEG), keeping the orientation of the camera
+async function verkleinFoto(file) {
+  let bron;
+  try { bron = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch {
+    bron = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Onbekend beeldformaat'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  const schaal = Math.min(1, FOTO_MAX / Math.max(bron.width, bron.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bron.width * schaal);
+  c.height = Math.round(bron.height * schaal);
+  c.getContext('2d').drawImage(bron, 0, 0, c.width, c.height);
+  bron.close?.();
+  return new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.82));
+}
+
+async function voegFotosToe(files) {
+  const wb = App.wb;
+  if (!wb || !files.length) return;
+  let n = 0;
+  for (const file of files) {
+    try {
+      const blob = await verkleinFoto(file);
+      await DB.put('fotos', { id: uid(), werkbonId: wb.id, blob, naam: file.name || 'foto.jpg', bijschrift: '', datum: new Date().toISOString() });
+      n++;
+    } catch (e) {
+      console.error(e);
+      toast(`Kon ${file.name || 'de foto'} niet lezen`);
+    }
+  }
+  if (n) toast(n === 1 ? 'Foto toegevoegd' : `${n} foto's toegevoegd`);
+  await tekenFotos();
+}
+
+function secFotos() {
+  const wb = App.wb;
+  return sec('fotos', `<span>Foto's <span class="muted small" data-foto-aantal></span></span>`, '4', `
+    <div class="foto-grid" data-fotos><span class="muted small">Laden…</span></div>
+    <div class="row" style="margin-top:12px">
+      <button type="button" class="btn primary" data-action="foto-camera">📷 Foto nemen</button>
+      <button type="button" class="btn" data-action="foto-kiezen">🖼 Foto kiezen</button>
+      <input type="file" accept="image/*" capture="environment" data-foto-input="camera" hidden>
+      <input type="file" accept="image/*" multiple data-foto-input="kiezen" hidden>
+    </div>
+    <label class="check"><input type="checkbox" data-f="fotosOpPdf" ${wb.fotosOpPdf !== false ? 'checked' : ''}> Foto's toevoegen aan de werkbon-PDF</label>`);
+}
+
+async function tekenFotos() {
+  const wb = App.wb;
+  if (!wb || !$('[data-fotos]')) return;
+  const fotos = await fotosVan(wb.id);
+  const el = $('[data-fotos]');
+  if (App.wb !== wb || !el) return;
+  el.innerHTML = fotos.map(f => `
+    <div class="foto" role="button" tabindex="0" data-foto="${esc(f.id)}" title="${esc(f.bijschrift || 'Foto bekijken')}">
+      <img src="${fotoUrl(f)}" alt="${esc(f.bijschrift || 'Foto')}">${f.bijschrift ? `<span>${esc(f.bijschrift)}</span>` : ''}
+    </div>`).join('') || '<span class="muted small">Nog geen foto\'s.</span>';
+  const teller = $('[data-foto-aantal]');
+  if (teller) teller.textContent = fotos.length ? `(${fotos.length})` : '';
+}
+
+async function openFotoModal(id) {
+  const wb = App.wb;
+  const f = await DB.get('fotos', id);
+  if (!f || !wb) return;
+  const vast = wb.status === 'afgerond';
+  const m = openModal({
+    title: 'Foto',
+    wide: true,
+    body: `<img class="foto-groot" src="${fotoUrl(f)}" alt="${esc(f.bijschrift || 'Foto')}">
+      <label class="field" style="margin-top:12px"><span>Bijschrift</span>
+        <input data-bijschrift value="${esc(f.bijschrift)}" placeholder="bv. lekkende valve circuit 12" ${vast ? 'disabled' : ''}></label>`,
+    foot: `${vast ? '' : '<button type="button" class="btn danger" data-del>Verwijderen</button><span class="spacer"></span>'}
+      <a class="btn" href="${fotoUrl(f)}" download="${esc(`${wb.nummer} foto.jpg`)}">Downloaden</a>
+      <button type="button" class="btn primary" data-close>Sluiten</button>`,
+    onClose: () => tekenFotos(),
+  });
+  $('[data-bijschrift]', m.el).addEventListener('change', async e => {
+    f.bijschrift = e.target.value.trim();
+    await DB.put('fotos', f);
+  });
+  $('[data-del]', m.el)?.addEventListener('click', async () => {
+    if (!confirm('Deze foto verwijderen?')) return;
+    await DB.del('fotos', f.id);
+    URL.revokeObjectURL(fotoUrls.get(f.id));
+    fotoUrls.delete(f.id);
+    m.close();
+    toast('Foto verwijderd');
+  });
+}
+
 function secOnderdelen() {
   const wb = App.wb;
   const rows = wb.onderdelen.map((l, i) => `
@@ -782,7 +889,7 @@ function secOnderdelen() {
       <td class="num w-qty"><input inputmode="decimal" data-f="onderdelen.${i}.aantal" data-t="num" value="${esc(numVal(l.aantal))}" aria-label="Aantal"></td>
       <td class="w-del"><button type="button" class="btn icon ghost" data-action="del-line" data-list="onderdelen" data-i="${i}" aria-label="Verwijderen">✕</button></td>
     </tr>`).join('');
-  return sec('onderdelen', 'Gebruikte onderdelen', '4', `
+  return sec('onderdelen', 'Gebruikte onderdelen', '5', `
     ${wb.onderdelen.length ? `<table class="lines">
       <thead><tr><th>Omschrijving</th><th class="right">Aantal</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>` : '<p class="muted" style="margin:0 0 8px">Nog geen onderdelen toegevoegd.</p>'}
@@ -810,7 +917,7 @@ function secKosten() {
       <label class="field"><span>Aantal</span><input inputmode="decimal" data-f="extra.${i}.aantal" data-t="num" value="${esc(numVal(l.aantal))}"></label>
       <button type="button" class="btn icon ghost" data-action="del-line" data-list="extra" data-i="${i}" aria-label="Verwijderen">✕</button>
     </div>`).join('');
-  return sec('kosten', 'Werkuren & kosten', '5', `
+  return sec('kosten', 'Werkuren & kosten', '6', `
     <div class="cost-row">
       <div class="lbl"><b>Werkuren</b><br>${auto}${garantieCheck('werkurenGarantie', wb.werkurenGarantie)}</div>
       <label class="field"><span>Uren</span><input inputmode="decimal" data-f="werkuren" data-t="num" value="${esc(numVal(wb.werkuren))}"></label>
@@ -843,7 +950,7 @@ function secHandtekening() {
         <button type="button" class="btn" data-action="finish-unsigned">Afronden zonder handtekening</button>
       </div>`;
   }
-  return sec('handtekening', 'Akkoord klant', '6', inner);
+  return sec('handtekening', 'Akkoord klant', '7', inner);
 }
 
 function refreshSection(id) {
@@ -883,16 +990,29 @@ function bindWerkbon() {
   root.addEventListener('input', onField);
   root.addEventListener('change', e => {
     if (e.target.matches('[data-machine]')) return onMachineChange(e.target);
+    if (e.target.matches('[data-foto-input]')) {
+      const files = [...e.target.files];
+      e.target.value = '';
+      return voegFotosToe(files);
+    }
     onField(e);
     // Tidy up number inputs once the user leaves them ("1.50" -> "1,5")
     if (e.target.dataset.t === 'num') e.target.value = numVal(getPath(App.wb, e.target.dataset.f));
   });
 
+  root.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-foto]')) { e.preventDefault(); openFotoModal(e.target.dataset.foto); }
+  });
   root.addEventListener('click', async e => {
+    // Photos can always be viewed, also on a finished werkbon
+    const foto = e.target.closest('[data-foto]');
+    if (foto) return openFotoModal(foto.dataset.foto);
     const btn = e.target.closest('[data-action]');
     if (!btn || btn.disabled) return;
     const wb = App.wb;
     switch (btn.dataset.action) {
+      case 'foto-camera': return $('[data-foto-input="camera"]').click();
+      case 'foto-kiezen': return $('[data-foto-input="kiezen"]').click();
       case 'pick-klant': return pickKlant();
       case 'pick-part': return pickPart();
       case 'add-free-part':
@@ -951,6 +1071,7 @@ function bindWerkbon() {
       case 'delete':
         if (!confirm(`Werkbon ${wb.nummer} definitief verwijderen?`)) return;
         clearTimeout(saveTimer); saveTimer = null;
+        for (const f of await fotosVan(wb.id)) await DB.del('fotos', f.id);
         await Sync.del('werkbonnen', wb.id);
         App.wb = null;
         location.hash = '#/';
@@ -1654,6 +1775,8 @@ async function viewInstellingen() {
   $('[data-backup]').addEventListener('click', async () => {
     const data = { app: 'werkbonnen', versie: 1, gemaakt: new Date().toISOString() };
     for (const st of DB.STORES) data[st] = await DB.getAll(st);
+    // Photos are Blobs: store them in the backup as data URLs
+    data.fotos = await Promise.all(data.fotos.map(async ({ blob, ...f }) => ({ ...f, beeld: await blobNaarDataUrl(blob) })));
     download(`werkbonnen-backup-${today()}.json`, JSON.stringify(data), 'application/json');
   });
   $('[data-restore]').addEventListener('click', async () => {
@@ -1663,6 +1786,7 @@ async function viewInstellingen() {
     try { data = JSON.parse(await file.text()); } catch { toast('Dit is geen geldig back-upbestand'); return; }
     if (data.app !== 'werkbonnen') { toast('Dit is geen back-up van deze app'); return; }
     if (!confirm(`Back-up van ${fmtDateTime(data.gemaakt)} terugzetten? Alle huidige gegevens op dit toestel worden vervangen.`)) return;
+    data.fotos = await Promise.all((data.fotos || []).map(async ({ beeld, ...f }) => ({ ...f, blob: await (await fetch(beeld)).blob() })));
     for (const st of DB.STORES) { await DB.clear(st); await DB.bulkPut(st, data[st] || []); }
     await boot();
     toast('Back-up teruggezet');
@@ -1691,6 +1815,13 @@ async function viewInstellingen() {
     toast('Alle gegevens gewist');
   });
 }
+
+const blobNaarDataUrl = blob => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result);
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(blob);
+});
 
 function resizeImage(file, maxW, maxH) {
   return new Promise((resolve, reject) => {
@@ -1753,6 +1884,8 @@ async function vervangStartgegevens(seed) {
    Boot
    ========================================================================= */
 async function boot() {
+  // Ask the browser to keep this app's data (werkbonnen, photos) when storage runs low
+  navigator.storage?.persist?.().catch(() => {});
   let stored = await DB.get('settings', 'app');
   if (!stored) {
     stored = clone(DEFAULT_SETTINGS);

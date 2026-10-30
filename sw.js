@@ -1,5 +1,5 @@
 // Offline support: network first (so updates arrive immediately), cached copy when offline.
-const CACHE = 'werkbonnen-v6';
+const CACHE = 'werkbonnen-v7';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'icons/icon.svg',
   'css/app.css', 'js/config.js', 'js/db.js', 'js/sync.js', 'js/signature.js', 'js/print.js', 'js/pdf.js', 'js/app.js', 'data/seed.js',

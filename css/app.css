@@ -185,6 +185,13 @@ input[type="checkbox"] { width: 22px; min-height: 22px; height: 22px; accent-col
 .cost-row:last-child { border-bottom: 0; }
 .cost-row .amount { text-align: right; font-weight: 600; white-space: nowrap; }
 
+.foto-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.foto { position: relative; aspect-ratio: 1; border-radius: var(--radius); overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); cursor: zoom-in; }
+.foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.foto span { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 6px; font-size: .75rem; color: #fff; background: rgba(13, 57, 50, .8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.foto:focus-visible { outline: 2px solid var(--boss-forest); outline-offset: 2px; }
+.foto-groot { display: block; max-width: 100%; max-height: 65vh; margin: 0 auto; border-radius: var(--radius); }
+
 .vrije-prijs { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: .8rem; color: var(--muted); }
 .vrije-prijs input { width: 110px; min-height: 36px; text-align: right; }
 .cost-row.extra { align-items: start; }

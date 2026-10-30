@@ -2,9 +2,10 @@
 // pushes changes to the central database whenever the device is online.
 const DB = (() => {
   const NAME = 'werkbonnen';
-  const VERSION = 2;
+  const VERSION = 3;
   // outbox: changes waiting to be sent to the central database
-  const STORES = ['klanten', 'machines', 'onderdelen', 'werkbonnen', 'monteurs', 'settings', 'outbox'];
+  // fotos: photos of a werkbon (image as a Blob), found through the werkbonId index
+  const STORES = ['klanten', 'machines', 'onderdelen', 'werkbonnen', 'monteurs', 'settings', 'outbox', 'fotos'];
   let dbPromise;
 
   function open() {
@@ -16,6 +17,8 @@ const DB = (() => {
           for (const s of STORES) {
             if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'id' });
           }
+          const fotos = req.transaction.objectStore('fotos');
+          if (!fotos.indexNames.contains('werkbonId')) fotos.createIndex('werkbonId', 'werkbonId');
         };
         // Another window still has an older version open: the upgrade waits until it is closed
         req.onblocked = () => showBlocked(true);
@@ -72,6 +75,7 @@ const DB = (() => {
     bulkPut: (store, arr) => tx(store, 'readwrite', s => { for (const o of arr) s.put(o); return arr.length; }),
     bulkDel: (store, ids) => tx(store, 'readwrite', s => { for (const id of ids) s.delete(id); return ids.length; }),
     count: store => tx(store, 'readonly', s => req2p(s.count())),
+    byIndex: (store, index, value) => tx(store, 'readonly', s => req2p(s.index(index).getAll(value))),
     // Delete only when the record still has this revision (it wasn't changed meanwhile)
     delIfRev: (store, id, rev) => tx(store, 'readwrite', s => {
       const r = s.get(id);

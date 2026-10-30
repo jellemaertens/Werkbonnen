@@ -50,6 +50,14 @@ const PRINT_CSS = `
     .p-table .muted { color: #4F5E58; font-size: 8.5pt; }
     .p-tag { display: inline-block; margin-left: 2mm; padding: .2mm 1.6mm; border-radius: 1mm; background: #A1D377; color: #0D3932; font: 700 7.5pt/1.4 "Mona Sans Condensed", "Mona Sans", Arial, sans-serif; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
     .p-totals .garantie td { color: #226E55; font-weight: 700; }
+
+    /* Foto's: eigen pagina, twee per rij */
+    .p-fotos-kop { break-before: page; margin-top: 0; }
+    .p-foto-rij { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; margin-top: 3mm; break-inside: avoid; }
+    .p-foto { margin: 0; background: #E2E7DC; border-radius: 1mm; padding: 2mm; }
+    .p-foto-kader { height: 64mm; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 1mm; overflow: hidden; }
+    .p-foto img { max-width: 100%; max-height: 64mm; display: block; }
+    .p-foto figcaption { margin-top: 1.5mm; font-size: 8.5pt; color: #0D3932; }
     .p-table tr { break-inside: avoid; }
 
     .p-costrow { display: grid; grid-template-columns: 1fr 72mm; gap: 3mm; align-items: start; margin-top: 3mm; break-inside: avoid; }
@@ -147,8 +155,19 @@ function totalsHtmlPrint(wb, t) {
 }
 
 /* ---------- Werkbon ---------- */
+// Photos as an extra page, two per row. fotos: [{ src, bijschrift }]
+function fotosHtml(fotos) {
+  if (!fotos.length) return '';
+  const rijen = [];
+  for (let i = 0; i < fotos.length; i += 2) rijen.push(fotos.slice(i, i + 2));
+  return `<div class="p-sec p-fotos-kop" data-nieuwe-pagina><div class="p-sec-h">Foto's</div></div>
+    ${rijen.map(rij => `<div class="p-foto-rij">${rij.map(f => `
+      <figure class="p-foto"><div class="p-foto-kader"><img src="${esc(f.src)}" alt=""></div>
+        ${f.bijschrift ? `<figcaption>${esc(f.bijschrift)}</figcaption>` : ''}</figure>`).join('')}</div>`).join('')}`;
+}
+
 // The werkbon never shows prices, totals or discounts: those are only on the pro forma
-function werkbonPrintHtml(wb, s) {
+function werkbonPrintHtml(wb, s, fotos = []) {
   const b = s.bedrijf;
   const aanleiding = [wb.interventie, wb.melding].filter(Boolean).join(' — ');
   const costRows = kostenRegels(wb);
@@ -226,7 +245,8 @@ function werkbonPrintHtml(wb, s) {
         <div class="p-cap">Voor akkoord, de klant</div>
         ${klantSign}
       </div>
-    </div>`);
+    </div>
+    ${fotosHtml(fotos)}`);
 }
 
 /* ---------- Pro forma ---------- */

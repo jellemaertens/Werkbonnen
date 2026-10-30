@@ -48,8 +48,14 @@ const PDF = (() => {
   // Page breaks only between blocks or table rows, never through them
   function breakPoints(content) {
     const top = content.getBoundingClientRect().top;
-    const sel = '.p-head, .p-pf, .p-cards, .p-cause, .p-sec, .p-table tr, .p-costrow, .p-bottom, .p-totals';
+    const sel = '.p-head, .p-pf, .p-cards, .p-cause, .p-sec, .p-table tr, .p-costrow, .p-bottom, .p-totals, .p-foto-rij';
     return [...content.querySelectorAll(sel)].map(el => (el.getBoundingClientRect().bottom - top) * SCALE).sort((a, b) => a - b);
+  }
+
+  // Blocks marked data-nieuwe-pagina (the photo page) always start on a new page
+  function forcedBreaks(content) {
+    const top = content.getBoundingClientRect().top;
+    return [...content.querySelectorAll('[data-nieuwe-pagina]')].map(el => (el.getBoundingClientRect().top - top) * SCALE);
   }
 
   async function render(html, titel) {
@@ -64,6 +70,7 @@ const PDF = (() => {
       const footH = footCanvas ? footCanvas.height / pxPerMm : 0;
       const pageH = (A4.h - MARGIN.top - MARGIN.bottom - footH - 4) * pxPerMm; // usable height per page, in px
       const breaks = breakPoints(content);
+      const forced = forcedBreaks(content);
 
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
@@ -72,7 +79,9 @@ const PDF = (() => {
 
       for (let y = 0, page = 0; y < canvas.height - 1; page++) {
         let end = Math.min(canvas.height, y + pageH);
-        if (end < canvas.height) {
+        const nieuwePagina = forced.find(b => b > y + 20 && b < end);
+        if (nieuwePagina) end = nieuwePagina;
+        else if (end < canvas.height) {
           const best = breaks.filter(b => b > y + 20 && b <= end).pop();
           if (best) end = best;
         }
@@ -133,8 +142,15 @@ const PDF = (() => {
   return { maak, render };
 })();
 
-function pdfWerkbon(wb, settings) {
-  return PDF.maak(werkbonPrintHtml(wb, settings), `Werkbon ${wb.nummer} ${wb.klant?.naam || ''}`.trim());
+async function pdfWerkbon(wb, settings) {
+  // The photos of this werkbon go on an extra page, unless switched off on the werkbon
+  const fotos = wb.fotosOpPdf === false ? [] : await fotosVan(wb.id);
+  const items = fotos.map(f => ({ src: URL.createObjectURL(f.blob), bijschrift: f.bijschrift }));
+  try {
+    await PDF.maak(werkbonPrintHtml(wb, settings, items), `Werkbon ${wb.nummer} ${wb.klant?.naam || ''}`.trim());
+  } finally {
+    items.forEach(i => URL.revokeObjectURL(i.src));
+  }
 }
 
 function pdfProforma(wb, settings) {
