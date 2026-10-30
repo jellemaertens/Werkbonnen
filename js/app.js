@@ -828,6 +828,75 @@ async function voegFotosToe(files) {
   await tekenFotos();
 }
 
+// Phones and tablets open their own camera app through <input capture>. Browsers on a PC or laptop
+// ignore capture and would only show a file picker, so there the webcam is used in a window of its own.
+function fotoNemen() {
+  const input = $('[data-foto-input="camera"]');
+  if ('capture' in input || matchMedia('(pointer: coarse)').matches || !navigator.mediaDevices?.getUserMedia) return input.click();
+  openCamera();
+}
+
+async function openCamera() {
+  let stream = null, n = 0, camIndex = 0, cams = [];
+  const stop = () => { stream?.getTracks().forEach(t => t.stop()); stream = null; };
+  const m = openModal({
+    title: 'Foto nemen',
+    wide: true,
+    body: `<div class="camera"><video class="camera-beeld" autoplay playsinline muted></video>
+      <p class="muted small" data-camera-melding>Camera starten…</p></div>`,
+    foot: `<button type="button" class="btn" data-wissel-cam hidden>Andere camera</button>
+      <button type="button" class="btn" data-kies hidden>Foto kiezen</button><span class="spacer"></span>
+      <button type="button" class="btn" data-close>Klaar</button>
+      <button type="button" class="btn primary" data-neem disabled>📷 Foto nemen</button>`,
+    onClose: stop,
+  });
+  const video = $('video', m.el), melding = $('[data-camera-melding]', m.el), neem = $('[data-neem]', m.el);
+
+  const start = async () => {
+    stop();
+    neem.disabled = true;
+    const keuze = cams[camIndex] ? { deviceId: { exact: cams[camIndex].deviceId } } : { facingMode: { ideal: 'environment' } };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { ...keuze, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    } catch (e) {
+      const geenCamera = e.name === 'NotFoundError' || e.name === 'OverconstrainedError';
+      melding.textContent = e.name === 'NotAllowedError'
+        ? 'Geen toegang tot de camera. Sta de camera toe in de browser (slotje naast het adres) en probeer opnieuw, of kies een foto.'
+        : geenCamera ? 'Geen camera gevonden op dit toestel. Kies een foto uit een bestand.' : `Camera niet beschikbaar (${e.message || e.name}). Kies een foto uit een bestand.`;
+      $('[data-kies]', m.el).hidden = false;
+      return;
+    }
+    if (!m.el.isConnected) return stop();   // closed while the camera was starting
+    video.srcObject = stream;
+    melding.textContent = n ? `${n} foto${n === 1 ? '' : "'s"} toegevoegd` : '';
+    neem.disabled = false;
+    // Only after permission are the cameras listed with their names
+    cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    $('[data-wissel-cam]', m.el).hidden = cams.length < 2;
+  };
+
+  neem.addEventListener('click', async () => {
+    if (!video.videoWidth) return;
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth;
+    c.height = video.videoHeight;
+    c.getContext('2d').drawImage(video, 0, 0);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+    video.classList.add('flits');
+    setTimeout(() => video.classList.remove('flits'), 150);
+    await voegFotosToe([new File([blob], `foto-${Date.now()}.jpg`, { type: 'image/jpeg' })]);
+    n++;
+    melding.textContent = `${n} foto${n === 1 ? '' : "'s"} toegevoegd`;
+  });
+  $('[data-wissel-cam]', m.el).addEventListener('click', () => {
+    const huidig = stream?.getVideoTracks()[0]?.getSettings().deviceId;
+    camIndex = (Math.max(0, cams.findIndex(d => d.deviceId === huidig)) + 1) % cams.length;
+    start();
+  });
+  $('[data-kies]', m.el).addEventListener('click', () => { m.close(); $('[data-foto-input="kiezen"]')?.click(); });
+  start();
+}
+
 function secFotos() {
   const wb = App.wb;
   return sec('fotos', `<span>Foto's <span class="muted small" data-foto-aantal></span></span>`, '4', `
@@ -1024,7 +1093,7 @@ function bindWerkbon() {
     if (!btn || btn.disabled) return;
     const wb = App.wb;
     switch (btn.dataset.action) {
-      case 'foto-camera': return $('[data-foto-input="camera"]').click();
+      case 'foto-camera': return fotoNemen();
       case 'foto-kiezen': return $('[data-foto-input="kiezen"]').click();
       case 'pick-klant': return pickKlant();
       case 'pick-part': return pickPart();

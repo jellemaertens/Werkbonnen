@@ -38,6 +38,9 @@
   color-scheme: light;
 }
 
+/* hidden must win over classes like .btn that set display */
+[hidden] { display: none !important; }
+
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
@@ -192,6 +195,9 @@ input[type="checkbox"] { width: 22px; min-height: 22px; height: 22px; accent-col
 .foto:focus-visible { outline: 2px solid var(--boss-forest); outline-offset: 2px; }
 .foto-wacht { display: flex; align-items: center; justify-content: center; font-size: 1.8rem; color: var(--muted); cursor: default; }
 .foto-groot { display: block; max-width: 100%; max-height: 65vh; margin: 0 auto; border-radius: var(--radius); }
+.camera-beeld { display: block; width: 100%; max-height: 60vh; aspect-ratio: 16 / 9; background: #0D3932; border-radius: var(--radius); object-fit: contain; transition: opacity .15s; }
+.camera-beeld.flits { opacity: .2; }
+.camera [data-camera-melding] { min-height: 1.5em; margin: 8px 0 0; }   /* reserved: the buttons must not move between photos */
 
 .vrije-prijs { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: .8rem; color: var(--muted); }
 .vrije-prijs input { width: 110px; min-height: 36px; text-align: right; }
