@@ -610,7 +610,32 @@ async function viewWerkbonnen() {
     draw();
   }));
   $('[data-export]').addEventListener('click', () => exportWerkbonnenCsv(all));
-  $('[data-sp-in]')?.addEventListener('click', async () => { if (await SP.aanmelden()) viewWerkbonnen(); });
+  $('[data-sp-in]')?.addEventListener('click', async () => { if (await spAanmelden()) viewWerkbonnen(); });
+}
+
+// "Aanmelden" / "Toegang geven". For the synced folder the browser can refuse without showing
+// anything (after an earlier "Don't allow"): then explain it and let the folder be picked again,
+// which always asks afresh. That needs a new click, hence the button in the dialog.
+async function spAanmelden() {
+  if (await SP.aanmelden()) { toast(SP.modus() === 'map' ? 'Toegang tot de map ✓' : 'Aangemeld ✓'); return true; }
+  if (SP.modus() !== 'map') { if (SP.state.toegangFout) toast(SP.state.toegangFout); return false; }
+  return new Promise(resolve => {
+    let gelukt = false;
+    const m = openModal({
+      title: 'Geen toegang tot de map',
+      body: `<p style="margin-top:0">${esc(SP.state.toegangFout || 'De browser gaf geen toegang tot de map.')}</p>
+        <p>Dat gebeurt als eerder <b>Niet toestaan</b> gekozen werd, of als de vraag van de browser weggeklikt werd. Kies de map <b>${esc(SP.mapNaam())}</b> opnieuw en klik <b>Wijzigingen toestaan</b>. Biedt de browser <b>Altijd toestaan</b> aan, kies dat dan.</p>
+        <p class="small muted" style="margin-bottom:0">Er gaat niets verloren: alles wat intussen gemaakt is, wordt verstuurd zodra de app weer toegang heeft.</p>`,
+      foot: '<button type="button" class="btn" data-close>Later</button><button type="button" class="btn primary" data-kies>Map opnieuw kiezen</button>',
+      onClose: () => resolve(gelukt),
+    });
+    $('[data-kies]', m.el).addEventListener('click', async () => {
+      gelukt = await SP.kiesMap();
+      if (gelukt) toast('Toegang tot de map ✓');
+      else if (SP.state.toegangFout) toast(SP.state.toegangFout);
+      m.close();
+    });
+  });
 }
 
 // Shown above the werkbonnen as long as this device does not share via SharePoint
@@ -1593,7 +1618,7 @@ function drawTopbar() {
     $('#who').addEventListener('click', () => openAanmelden(() => route()));
     $('#sync-badge').addEventListener('click', () => {
       if (SP.ingesteld()) {
-        if (SP.state.status === 'aanmelden') return SP.aanmelden().then(ok => { if (ok && !App.wb) route(); });
+        if (SP.state.status === 'aanmelden') return spAanmelden().then(ok => { if (ok && !App.wb) route(); });
         SP.syncNu();
       } else Sync.syncNow();
       location.hash = '#/instellingen';
@@ -1902,13 +1927,17 @@ async function viewInstellingen() {
   root.addEventListener('change', e => { if (e.target.dataset.s?.startsWith('centraal.')) Sync.schedule(500); });
 
   $('[data-wissel]').addEventListener('click', () => openAanmelden(() => viewInstellingen()));
-  $('[data-sp-in]')?.addEventListener('click', async () => { await SP.aanmelden(); viewInstellingen(); });
+  $('[data-sp-in]')?.addEventListener('click', async () => { await spAanmelden(); viewInstellingen(); });
   $('[data-sp-uit]')?.addEventListener('click', () => {
     if (!confirm('Afmelden bij Microsoft? De gegevens blijven op dit toestel, maar worden niet meer gedeeld tot je opnieuw aanmeldt.')) return;
     SP.afmelden();
     viewInstellingen();
   });
-  $('[data-sp-kies]')?.addEventListener('click', async () => { if (await SP.kiesMap()) toast('Map gekoppeld ✓'); viewInstellingen(); });
+  $('[data-sp-kies]')?.addEventListener('click', async () => {
+    if (await SP.kiesMap()) toast('Map gekoppeld ✓');
+    else if (SP.state.toegangFout) toast(SP.state.toegangFout);
+    viewInstellingen();
+  });
   $('[data-sp-los]')?.addEventListener('click', async () => {
     if (!confirm('De map ontkoppelen? De gegevens blijven op dit toestel en in SharePoint, maar dit toestel deelt niets meer tot je opnieuw een map kiest.')) return;
     await SP.ontkoppelMap();

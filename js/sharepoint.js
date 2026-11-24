@@ -34,7 +34,8 @@ const SP = (() => {
   const MAX_SIMPLE = 3.5 * 1024 * 1024;   // Graph: simple upload up to 4 MB, larger via an upload session
   const CHUNK = 320 * 1024 * 16;          // upload session chunks must be a multiple of 320 KiB
 
-  const state = { status: 'uit', message: '', pending: 0, lastSync: null, gebruiker: '' };
+  // toegangFout: why the browser gave no access to the synced folder (shown to the technician)
+  const state = { status: 'uit', message: '', pending: 0, lastSync: null, gebruiker: '', toegangFout: '' };
   const listeners = new Set();
   const emit = type => listeners.forEach(fn => { try { fn(type, state); } catch (e) { console.error(e); } });
   const setStatus = (status, message = '') => { state.status = status; state.message = message; emit('status'); };
@@ -73,17 +74,24 @@ const SP = (() => {
 
   // Lets the technician pick the synced "Werkbonnen Boss" folder (needs a click)
   async function kiesMap() {
+    state.toegangFout = '';
     let h;
     try {
       h = await window.showDirectoryPicker({ id: 'werkbonnen-sharepoint', mode: 'readwrite', startIn: 'documents' });
-    } catch { return false; }   // cancelled
+    } catch (e) {
+      if (e?.name !== 'AbortError') { console.warn('Map kiezen mislukt', e); state.toegangFout = `De browser kon de map niet openen (${e?.name}: ${e?.message})`; }
+      return false;   // AbortError: cancelled by the technician
+    }
     if (h.name !== MAP_NAAM) {
       // The parent folder picked by mistake? Then use the folder inside it
       const binnen = await h.getDirectoryHandle(MAP_NAAM).catch(() => null);
       if (binnen) h = binnen;
       else if (!confirm(`De gekozen map heet "${h.name}", niet "${MAP_NAAM}". Toch deze map gebruiken?`)) return false;
     }
-    if ((await h.requestPermission({ mode: 'readwrite' })) !== 'granted') return false;
+    if ((await h.requestPermission({ mode: 'readwrite' }).catch(() => 'denied')) !== 'granted') {
+      state.toegangFout = 'De browser gaf geen toestemming om in de map te schrijven.';
+      return false;
+    }
     const anders = !mapHandle || !(await mapHandle.isSameEntry(h));
     await DB.put('settings', { id: 'spmap', handle: h });
     mapHandle = h;
@@ -203,9 +211,17 @@ const SP = (() => {
   // The "Aanmelden" button: access to the folder again, a folder to choose, or a Microsoft sign-in
   async function aanmelden() {
     if (modus() === 'map') {
-      mapToegang = (await mapHandle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied')) === 'granted';
-      if (mapToegang) syncNu();
-      return mapToegang;
+      // Once "Don't allow" was chosen, Edge and Chrome refuse without showing anything. The app then
+      // offers to pick the folder again, which always asks afresh (see spAanmelden in app.js).
+      state.toegangFout = '';
+      let antwoord;
+      try { antwoord = await mapHandle.requestPermission({ mode: 'readwrite' }); }
+      catch (e) { console.warn('Toegang tot de map mislukt', e); antwoord = 'fout'; state.toegangFout = `${e?.name}: ${e?.message}`; }
+      mapToegang = antwoord === 'granted';
+      if (mapToegang) { syncNu(); return true; }
+      if (antwoord === 'denied') state.toegangFout = 'De browser weigerde de toegang tot de map.';
+      emit('status');
+      return false;
     }
     if (!graphIngesteld()) return mapMogelijk() && kiesMap();
     return microsoftAanmelden();
